@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { ChangeEvent } from 'react';
 import { fetchGraph, fetchRunDetail, fetchRuns, startRun, briefDownloadUrl } from './api';
 import { useRunStream } from './hooks/useRunStream';
@@ -52,6 +52,27 @@ function formatTimestamp(value?: string): string {
   return date.toLocaleString();
 }
 
+interface DevSectionProps {
+  title: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}
+
+function DevSection({ title, isOpen, onToggle, children }: DevSectionProps) {
+  return (
+    <section className={`inspector-section ${isOpen ? 'expanded' : 'collapsed'}`}>
+      <div className="section-header">
+        <h3>{title}</h3>
+        <button type="button" className="section-toggle" aria-expanded={isOpen} onClick={onToggle}>
+          {isOpen ? 'Hide' : 'Show'}
+        </button>
+      </div>
+      {isOpen && <div className="section-body">{children}</div>}
+    </section>
+  );
+}
+
 export default function App() {
   const [graph, setGraph] = useState<Graph | null>(null);
   const [runs, setRuns] = useState<PipelineRunState[]>([]);
@@ -64,6 +85,11 @@ export default function App() {
   const [usage, setUsage] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(false);
+  const [isSeedConfigOpen, setIsSeedConfigOpen] = useState(true);
+  const [isInspectorSectionOpen, setIsInspectorSectionOpen] = useState(true);
+  const [isOutputSectionOpen, setIsOutputSectionOpen] = useState(true);
+  const [isUsageSectionOpen, setIsUsageSectionOpen] = useState(true);
 
   useEffect(() => {
     fetchGraph().then(setGraph).catch(console.error);
@@ -218,70 +244,63 @@ export default function App() {
           <h1>Node-Graph Brainstormer</h1>
           <p className="subtitle">Seed → DivergeGenerate → PackageOutput</p>
         </div>
-        <button
-          className="run-button"
-          onClick={handleStartRun}
-          disabled={isSubmitting || runStatus === 'running'}
-        >
-          {isSubmitting ? 'Starting…' : runStatus === 'running' ? 'Running…' : 'Run All'}
-        </button>
       </header>
 
       <main className="app-layout">
-        <section className="panel seed-panel">
-          <h2>Seed</h2>
-          <label>
-            Goal
-            <textarea value={form.goal} onChange={handleInputChange('goal')} rows={3} />
-          </label>
-          <label>
-            Audience
-            <textarea value={form.audience} onChange={handleInputChange('audience')} rows={2} />
-          </label>
-          <label>
-            Constraints
-            <textarea value={form.constraints} onChange={handleInputChange('constraints')} rows={3} />
-          </label>
-          <div className="inline-fields">
-            <label>
-              N ideas
-              <input value={form.n} onChange={handleInputChange('n')} placeholder="DEFAULT_N" />
-            </label>
-            <label>
-              Top K
-              <input value={form.k} onChange={handleInputChange('k')} placeholder="DEFAULT_K" />
-            </label>
-          </div>
-          {error && <p className="error-text">{error}</p>}
-          <div className="history">
-            <h3>Recent Runs</h3>
-            <ul>
-              {runs.map((run) => (
-                <li key={run.id}>
-                  <button className="history-item" onClick={() => handleSelectRun(run)}>
-                    <span>{new Date(run.createdAt).toLocaleString()}</span>
-                    <span className={`status status-${run.status}`}>{run.status}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-
         <section className="panel canvas-panel">
-          <h2>Pipeline</h2>
+          <div className="pipeline-top">
+            <div>
+              <h2>Pipeline</h2>
+              <p className="pipeline-subtitle">Seed inputs live in the Seed node card.</p>
+            </div>
+            <button
+              className="run-button inline"
+              onClick={handleStartRun}
+              disabled={isSubmitting || runStatus === 'running'}
+            >
+              {isSubmitting ? 'Starting…' : runStatus === 'running' ? 'Running…' : 'Run All'}
+            </button>
+          </div>
           <div className="canvas">
             {graphNodes.map((node, index) => {
               const status = nodeDetails[node.id]?.status ?? 'pending';
+              const isSeedNode = node.id === 'seed';
               return (
                 <div className="canvas-item" key={node.id}>
-                  <button
-                    className={`node-card status-${status} ${selectedNodeId === node.id ? 'selected' : ''}`}
-                    onClick={() => setSelectedNodeId(node.id)}
-                  >
-                    <span className="node-label">{node.label}</span>
-                    <span className="node-status">{status}</span>
-                  </button>
+                  <div className={`node-card status-${status} ${selectedNodeId === node.id ? 'selected' : ''}`}>
+                    <button
+                      type="button"
+                      className="node-card-toggle"
+                      onClick={() => setSelectedNodeId(node.id)}
+                    >
+                      <span className="node-label">{node.label}</span>
+                      <span className="node-status">{status}</span>
+                    </button>
+                    {isSeedNode && (
+                      <div className="node-card-body">
+                        <div className="seed-fields">
+                          <label>
+                            Goal
+                            <textarea value={form.goal} onChange={handleInputChange('goal')} rows={3} />
+                          </label>
+                          <label>
+                            Audience
+                            <textarea value={form.audience} onChange={handleInputChange('audience')} rows={2} />
+                          </label>
+                          <label>
+                            Constraints
+                            <textarea value={form.constraints} onChange={handleInputChange('constraints')} rows={3} />
+                          </label>
+                        </div>
+                        {error && <p className="error-text">{error}</p>}
+                      </div>
+                    )}
+                    {!isSeedNode && selectedNodeId === node.id && (
+                      <div className="node-card-body secondary">
+                        <p className="node-card-info">Inspect details in the Dev panel.</p>
+                      </div>
+                    )}
+                  </div>
                   {index < graphNodes.length - 1 && <div className="edge" aria-hidden />}
                 </div>
               );
@@ -294,54 +313,110 @@ export default function App() {
           )}
         </section>
 
-        <section className="panel inspector-panel">
-          <h2>Inspector</h2>
-          {selectedNode ? (
-            <div className="inspector">
-              <p>
-                <strong>Status:</strong> <span className={`status status-${selectedNode.status}`}>{selectedNode.status}</span>
-              </p>
-              <p>
-                <strong>Started:</strong> {formatTimestamp(selectedNode.startedAt)}
-              </p>
-              <p>
-                <strong>Finished:</strong> {formatTimestamp(selectedNode.finishedAt)}
-              </p>
-              {selectedNode.error && (
-                <p className="error-text">Error: {selectedNode.error}</p>
-              )}
-              <div>
-                <h3>Input</h3>
-                <pre>{serialize(selectedNode.input)}</pre>
-              </div>
-              <div>
-                <h3>Output</h3>
-                <pre>{serialize(selectedNode.output)}</pre>
-              </div>
-            </div>
-          ) : (
-            <p>Select a node to inspect inputs and outputs.</p>
-          )}
-        </section>
+        <section className={`panel inspector-panel ${isInspectorOpen ? 'open' : 'collapsed'}`}>
+          <div className="inspector-header">
+            <h2>Dev Tools</h2>
+            <button
+              type="button"
+              className={`dev-toggle ${isInspectorOpen ? 'active' : ''}`}
+              onClick={() => setIsInspectorOpen((prev) => !prev)}
+              aria-expanded={isInspectorOpen}
+            >
+              Dev
+            </button>
+          </div>
+          {isInspectorOpen && (
+            <div className="dev-content">
+              <DevSection
+                title="Seed Config"
+                isOpen={isSeedConfigOpen}
+                onToggle={() => setIsSeedConfigOpen((prev) => !prev)}
+              >
+                <div className="inline-fields seed-config-fields">
+                  <label>
+                    N ideas
+                    <input value={form.n} onChange={handleInputChange('n')} placeholder="DEFAULT_N" />
+                  </label>
+                  <label>
+                    Top K
+                    <input value={form.k} onChange={handleInputChange('k')} placeholder="DEFAULT_K" />
+                  </label>
+                </div>
+                <div className="seed-history history">
+                  <h4>Recent Runs</h4>
+                  <ul>
+                    {runs.map((run) => (
+                      <li key={run.id}>
+                        <button className="history-item" onClick={() => handleSelectRun(run)}>
+                          <span>{new Date(run.createdAt).toLocaleString()}</span>
+                          <span className={`status status-${run.status}`}>{run.status}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </DevSection>
 
-        <section className="panel output-panel">
-          <h2>Output</h2>
-          {brief ? (
-            <>
-              <pre className="brief-view">{brief}</pre>
-              {currentRunId && (
-                <a className="download-link" href={briefDownloadUrl(currentRunId)} download>
-                  Download Markdown
-                </a>
+              <DevSection
+                title="Inspector"
+                isOpen={isInspectorSectionOpen}
+                onToggle={() => setIsInspectorSectionOpen((prev) => !prev)}
+              >
+                {selectedNode ? (
+                  <div className="inspector">
+                    <p>
+                      <strong>Status:</strong>{' '}
+                      <span className={`status status-${selectedNode.status}`}>{selectedNode.status}</span>
+                    </p>
+                    <p>
+                      <strong>Started:</strong> {formatTimestamp(selectedNode.startedAt)}
+                    </p>
+                    <p>
+                      <strong>Finished:</strong> {formatTimestamp(selectedNode.finishedAt)}
+                    </p>
+                    {selectedNode.error && <p className="error-text">Error: {selectedNode.error}</p>}
+                    <div>
+                      <h4>Input</h4>
+                      <pre>{serialize(selectedNode.input)}</pre>
+                    </div>
+                    <div>
+                      <h4>Output</h4>
+                      <pre>{serialize(selectedNode.output)}</pre>
+                    </div>
+                  </div>
+                ) : (
+                  <p>Select a node to inspect inputs and outputs.</p>
+                )}
+              </DevSection>
+
+              <DevSection
+                title="Output"
+                isOpen={isOutputSectionOpen}
+                onToggle={() => setIsOutputSectionOpen((prev) => !prev)}
+              >
+                {brief ? (
+                  <>
+                    <pre className="brief-view">{brief}</pre>
+                    {currentRunId && (
+                      <a className="download-link" href={briefDownloadUrl(currentRunId)} download>
+                        Download Markdown
+                      </a>
+                    )}
+                  </>
+                ) : (
+                  <p>No brief yet. Run the pipeline to generate one.</p>
+                )}
+              </DevSection>
+
+              {usage && (
+                <DevSection
+                  title="Usage"
+                  isOpen={isUsageSectionOpen}
+                  onToggle={() => setIsUsageSectionOpen((prev) => !prev)}
+                >
+                  <pre>{serialize(usage)}</pre>
+                </DevSection>
               )}
-            </>
-          ) : (
-            <p>No brief yet. Run the pipeline to generate one.</p>
-          )}
-          {usage && (
-            <div className="usage">
-              <h3>Usage</h3>
-              <pre>{serialize(usage)}</pre>
             </div>
           )}
         </section>
