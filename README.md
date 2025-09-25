@@ -71,10 +71,10 @@ runs/
     state.json
     token_usage.json
     brief.md
+    packaged_brief.json
     node_io/
       seed.json
       divergeGenerate.json
-      packageOutput.json
 ```
 
 ## Frontend Highlights

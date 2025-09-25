@@ -8,7 +8,7 @@ import {
   DivergeNodeOutput,
   GeminiUsage,
   Idea,
-  PackageNodeOutput,
+  PackagedBrief,
   PipelineGraph,
   PipelineOutput,
   PipelineRunState,
@@ -37,6 +37,12 @@ export type RunEvent =
       runId: string;
       nodeId: string;
       payload: unknown;
+    }
+  | {
+      type: 'packaged-brief';
+      runId: string;
+      payload: PackagedBrief;
+      timestamp: string;
     };
 
 export type RunEmitter = EventEmitter;
@@ -45,12 +51,8 @@ export const GRAPH: PipelineGraph = {
   nodes: [
     { id: 'seed', label: 'Seed', type: 'seed' },
     { id: 'divergeGenerate', label: 'DivergeGenerate', type: 'diverge' },
-    { id: 'packageOutput', label: 'PackageOutput', type: 'package' },
   ],
-  edges: [
-    { source: 'seed', target: 'divergeGenerate' },
-    { source: 'divergeGenerate', target: 'packageOutput' },
-  ],
+  edges: [{ source: 'seed', target: 'divergeGenerate' }],
 };
 
 const NODE_DIR = 'node_io';
@@ -173,6 +175,19 @@ async function persistUsage(runDir: string, usage: unknown): Promise<void> {
   await writeJson(path.join(runDir, 'token_usage.json'), usage);
 }
 
+async function persistPackagedBrief(
+  runDir: string,
+  packaged: PackagedBrief,
+  input: { k: number; ideaCount: number },
+): Promise<void> {
+  await writeJson(path.join(runDir, 'packaged_brief.json'), {
+    status: 'completed',
+    input,
+    output: packaged,
+    timestamp: new Date().toISOString(),
+  });
+}
+
 async function persistRunState(runDir: string, state: PipelineRunState): Promise<void> {
   await writeJson(path.join(runDir, 'state.json'), state);
 }
@@ -217,13 +232,6 @@ export async function runPipeline(
       divergeGenerate: {
         id: 'divergeGenerate',
         label: 'DivergeGenerate',
-        status: 'pending',
-        input: null,
-        output: null,
-      },
-      packageOutput: {
-        id: 'packageOutput',
-        label: 'PackageOutput',
         status: 'pending',
         input: null,
         output: null,
@@ -380,42 +388,34 @@ export async function runPipeline(
   }
 
   const k = Math.max(1, Math.min(ideas.length, plannedTopK));
-  await markNodeStatus('packageOutput', 'running');
   const brief = buildBrief(sanitized, ideas, k);
   const selectedIdeas = ideas.slice(0, k);
   const selectedCount = selectedIdeas.length;
-  const packageSections = buildPackageSections(sanitized, selectedIdeas, ideas.length, selectedCount);
+  const packagedSections = buildPackageSections(sanitized, selectedIdeas, ideas.length, selectedCount);
   const packageSummary =
     selectedCount > 0
       ? `Curated the top ${selectedCount} concept${selectedCount === 1 ? '' : 's'} into a stakeholder-ready brief.`
       : 'Prepared a brief shell; regenerate concepts to populate the highlights.';
-  const packageOutput: PackageNodeOutput = {
+  const packagedBrief: PackagedBrief = {
     title: 'Executive Creative Brief',
     summary: packageSummary,
     metadata: {
       selectedCount,
       totalGenerated: ideas.length,
     },
-    sections: packageSections,
+    sections: packagedSections,
     brief,
   };
-  await updateNode('packageOutput', {
-    input: { k, ideas },
-    output: packageOutput,
-  });
-  await markNodeStatus('packageOutput', 'completed');
-  await persistNodeIO(runDir, 'packageOutput', {
-    nodeId: 'packageOutput',
-    status: 'completed',
-    input: { k, ideas },
-    output: packageOutput,
-    timestamps: {
-      startedAt: state.nodes.packageOutput.startedAt,
-      finishedAt: state.nodes.packageOutput.finishedAt,
-    },
-  });
+  state.packagedBrief = packagedBrief;
+  await persistRunState(runDir, state);
+  await persistPackagedBrief(runDir, packagedBrief, { k, ideaCount: ideas.length });
   await persistBrief(runDir, brief);
-  emitter.emit('event', { type: 'node-io', runId, nodeId: 'packageOutput', payload: packageOutput });
+  emitter.emit('event', {
+    type: 'packaged-brief',
+    runId,
+    payload: packagedBrief,
+    timestamp: new Date().toISOString(),
+  });
 
   state.status = 'completed';
   state.usage = usageMeta;
@@ -444,7 +444,7 @@ export async function runPipeline(
     nodes: {
       seed: seedOutput,
       divergeGenerate: finalDivergeOutput,
-      packageOutput,
     },
+    packagedBrief,
   } satisfies PipelineOutput;
 }

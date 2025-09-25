@@ -1,7 +1,7 @@
 export interface GraphNode {
   id: string;
   label: string;
-  type: 'seed' | 'diverge' | 'package';
+  type: 'seed' | 'diverge';
 }
 
 export interface GraphEdge {
@@ -34,6 +34,7 @@ export interface PipelineRunState {
   error?: string;
   nodes: Record<string, NodeState>;
   usage?: Record<string, unknown>;
+  packagedBrief?: PackagedBrief;
 }
 
 export interface BrainstormIdea {
@@ -83,7 +84,7 @@ export interface BriefSection {
   body: string;
 }
 
-export interface PackageNodeOutput {
+export interface PackagedBrief {
   title: string;
   summary: string;
   metadata: {
@@ -97,7 +98,6 @@ export interface PackageNodeOutput {
 export interface PipelineNodeOutputs {
   seed: SeedNodeOutput;
   divergeGenerate: DivergeNodeOutput;
-  packageOutput: PackageNodeOutput;
 }
 
 export type RunEvent =
@@ -121,6 +121,12 @@ export type RunEvent =
       runId: string;
       nodeId: string;
       payload: unknown;
+    }
+  | {
+      type: 'packaged-brief';
+      runId: string;
+      payload: PackagedBrief;
+      timestamp: string;
     };
 
 export interface RunDetailResponse {
@@ -128,4 +134,5 @@ export interface RunDetailResponse {
   nodeIO: Record<string, unknown>;
   brief?: string;
   usage?: Record<string, unknown>;
+  packagedBrief?: PackagedBrief;
 }

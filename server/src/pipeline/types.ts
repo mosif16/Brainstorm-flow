@@ -53,7 +53,7 @@ export interface BriefSection {
   body: string;
 }
 
-export interface PackageNodeOutput {
+export interface PackagedBrief {
   title: string;
   summary: string;
   metadata: {
@@ -67,10 +67,9 @@ export interface PackageNodeOutput {
 export interface PipelineNodeOutputs {
   seed: SeedNodeOutput;
   divergeGenerate: DivergeNodeOutput;
-  packageOutput: PackageNodeOutput;
 }
 
-export type NodeId = 'seed' | 'divergeGenerate' | 'packageOutput';
+export type NodeId = 'seed' | 'divergeGenerate';
 
 export interface NodeResult<TInput, TOutput> {
   id: NodeId;
@@ -84,7 +83,7 @@ export interface NodeResult<TInput, TOutput> {
 }
 
 export interface PipelineGraph {
-  nodes: Array<{ id: NodeId; label: string; type: 'seed' | 'diverge' | 'package' }>;
+  nodes: Array<{ id: NodeId; label: string; type: 'seed' | 'diverge' }>;
   edges: Array<{ source: NodeId; target: NodeId }>;
 }
 
@@ -95,6 +94,7 @@ export interface PipelineRunState {
   error?: string;
   nodes: Record<NodeId, NodeResult<unknown, unknown>>;
   usage?: GeminiUsage;
+  packagedBrief?: PackagedBrief;
 }
 
 export interface PipelineOutput {
@@ -103,4 +103,5 @@ export interface PipelineOutput {
   brief: string;
   usage: GeminiUsage;
   nodes: PipelineNodeOutputs;
+  packagedBrief: PackagedBrief;
 }

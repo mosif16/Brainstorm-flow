@@ -19,7 +19,7 @@ import type {
   RunEvent,
   SeedNodeOutput,
   DivergeNodeOutput,
-  PackageNodeOutput,
+  PackagedBrief,
 } from './types';
 import './App.css';
 
@@ -107,6 +107,7 @@ export default function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string>('seed');
   const [nodeDetails, setNodeDetails] = useState<Record<string, NodeData>>({});
   const [brief, setBrief] = useState<string>('');
+  const [packagedBrief, setPackagedBrief] = useState<PackagedBrief | null>(null);
   const [usage, setUsage] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -461,12 +462,21 @@ export default function App() {
         delete next[event.nodeId];
         return next;
       });
-      if (event.nodeId === 'packageOutput') {
-        const payload = event.payload as { brief?: string };
-        if (payload?.brief) {
-          setBrief(payload.brief);
-        }
+    } else if (event.type === 'packaged-brief') {
+      setPackagedBrief(event.payload);
+      if (event.payload?.brief) {
+        setBrief(event.payload.brief);
       }
+      setExpandedPreviews((prev) => ({
+        ...prev,
+        packagedBrief: false,
+      }));
+      setCollapsedNodeContent((prev) => {
+        if (!prev.packagedBrief) return prev;
+        const next = { ...prev };
+        delete next.packagedBrief;
+        return next;
+      });
     } else if (event.type === 'run-status') {
       setRunStatus(event.status);
       if (event.status === 'completed' || event.status === 'failed') {
@@ -501,8 +511,14 @@ export default function App() {
       };
     }
     setNodeDetails(merged);
-    if (detail.brief) setBrief(detail.brief);
+    if (detail.brief) {
+      setBrief(detail.brief);
+    } else if (detail.packagedBrief?.brief) {
+      setBrief(detail.packagedBrief.brief);
+    }
     if (detail.usage) setUsage(detail.usage);
+    const packaged = detail.packagedBrief ?? detail.state.packagedBrief;
+    setPackagedBrief(packaged ?? null);
     setCollapsedNodeContent({});
   };
 
@@ -513,15 +529,15 @@ export default function App() {
   const resetRunState = (seedPayload: { goal: string; audience: string; constraints: string; n?: number; k?: number }) => {
     const seedNode: NodeData = { status: 'pending', input: seedPayload, output: null };
     const divergeNode: NodeData = { status: 'pending', input: { n: seedPayload.n, seed: seedPayload }, output: null };
-    const packageNode: NodeData = { status: 'pending', input: { k: seedPayload.k }, output: null };
     setNodeDetails({
       seed: seedNode,
       divergeGenerate: divergeNode,
-      packageOutput: packageNode,
     });
     setBrief('');
+    setPackagedBrief(null);
     setUsage(null);
     setSelectedNodeId('seed');
+    setExpandedPreviews({});
     setCollapsedNodeContent({});
   };
 
@@ -625,6 +641,49 @@ export default function App() {
     }
     return null;
   }, []);
+
+  const packagedSections = useMemo(() => {
+    if (!packagedBrief) return [] as Array<{ title: string; body: string }>;
+    const normalized = (packagedBrief.sections ?? [])
+      .map((section) => ({
+        title: tidyText(section.title || ''),
+        body: tidyText(section.body || ''),
+      }))
+      .filter((section) => section.body.length > 0);
+    if (normalized.length > 0) {
+      return normalized;
+    }
+    const fallback = packagedBrief.brief
+      .split(/\n{2,}/)
+      .map((block) => tidyText(block))
+      .filter((block) => block.length > 0)
+      .map((body, index) => ({ title: `Section ${index + 1}`, body }));
+    return fallback;
+  }, [packagedBrief, tidyText]);
+
+  const packagedMetaLabel = useMemo(() => {
+    if (!packagedBrief) return '';
+    const parts: string[] = [];
+    const { metadata, brief: packagedBriefText } = packagedBrief;
+    if (metadata) {
+      if (typeof metadata.selectedCount === 'number') {
+        parts.push(`${metadata.selectedCount} selected`);
+      }
+      if (typeof metadata.totalGenerated === 'number') {
+        parts.push(`${metadata.totalGenerated} generated`);
+      }
+    }
+    if (typeof packagedBriefText === 'string' && packagedBriefText.trim()) {
+      const wordCount = packagedBriefText.trim().split(/\s+/).length;
+      parts.push(`${wordCount} words`);
+    }
+    return parts.join(' • ');
+  }, [packagedBrief]);
+
+  const packagedSummary = useMemo(() => {
+    if (!packagedBrief) return '';
+    return tidyText(packagedBrief.summary);
+  }, [packagedBrief, tidyText]);
 
   const togglePreviewExpansion = useCallback((nodeId: string) => {
     setExpandedPreviews((prev) => ({
@@ -790,126 +849,6 @@ export default function App() {
             {hiddenCount > 0 && (
               <button type="button" className="node-preview-toggle" onClick={handleToggle}>
                 {isExpanded ? 'Collapse list' : `Show ${hiddenCount} more`}
-              </button>
-            )}
-          </div>
-        );
-      }
-
-      if (nodeId === 'packageOutput') {
-        const packageOutput = node.output as PackageNodeOutput | undefined;
-        const briefSnippet = extractBrief(node.output);
-        const summary = packageOutput?.summary ? tidyText(packageOutput.summary) : '';
-        const sectionsFromOutput = (packageOutput?.sections ?? [])
-          .map((section) => ({
-            title: tidyText(section.title || ''),
-            body: tidyText(section.body || ''),
-          }))
-          .filter((section) => section.body.length > 0);
-        let previewSections = sectionsFromOutput;
-        if (!previewSections.length && briefSnippet) {
-          previewSections = briefSnippet
-            .split(/\n{2,}/)
-            .map((section) => section.trim())
-            .filter(Boolean)
-            .map((section, index) => {
-              const colonIndex = section.indexOf(':');
-              if (colonIndex > 0 && colonIndex < 80) {
-                const heading = tidyText(section.slice(0, colonIndex));
-                const body = tidyText(section.slice(colonIndex + 1));
-                return { title: heading || `Section ${index + 1}`, body };
-              }
-              return { title: `Section ${index + 1}`, body: tidyText(section) };
-            })
-            .filter((section) => section.body.length > 0);
-        }
-        if (!previewSections.length && !summary) {
-          return (
-            <div className="node-preview muted">
-              <p className="node-card-info muted">Brief will appear after packaging.</p>
-            </div>
-          );
-        }
-
-        const wordCount = briefSnippet?.trim() ? briefSnippet.trim().split(/\s+/).length : 0;
-        const metadata = packageOutput?.metadata;
-        const metaParts: string[] = [];
-        if (metadata) {
-          if (typeof metadata.selectedCount === 'number') {
-            metaParts.push(`${metadata.selectedCount} selected`);
-          }
-          if (typeof metadata.totalGenerated === 'number') {
-            metaParts.push(`${metadata.totalGenerated} generated`);
-          }
-        }
-        if (wordCount > 0) {
-          metaParts.push(`${wordCount} words`);
-        }
-        const metaLabel = metaParts.join(' • ');
-
-        const hasPreviewSections = previewSections.length > 0;
-        const MAX_SECTIONS = 2;
-        const visibleSections = hasPreviewSections
-          ? (isExpanded ? previewSections : previewSections.slice(0, MAX_SECTIONS))
-          : [];
-        const hiddenCount = hasPreviewSections ? previewSections.length - visibleSections.length : 0;
-        const briefClassName = `brief-preview ${isExpanded ? 'expanded' : ''}`.trim();
-
-        return (
-          <div className="node-preview">
-            <div className="node-preview-header">
-              <span className="node-preview-title">{packageOutput?.title ?? 'Packaged Brief'}</span>
-              {metaLabel && <span className="node-preview-meta">{metaLabel}</span>}
-            </div>
-            {summary && <p className="node-card-info">{summary}</p>}
-            {hasPreviewSections && (
-              <div className={briefClassName} aria-label="Brief preview">
-                {visibleSections.map((section, index) => {
-                  const heading = section.title || `Section ${index + 1}`;
-                  const sectionKey = `section-${index}`;
-                  const bodyId = `${nodeId}-${sectionKey}`;
-                  const isSectionCollapsed = collapsedNodeContent[nodeId]?.[sectionKey] ?? false;
-                  const handleSectionToggle = () => toggleNodeContent(nodeId, sectionKey);
-                  const displayBody = isExpanded ? section.body : truncateText(section.body, 240);
-                  const collapsedPreview = truncateText(section.body, 200);
-                  const { primary, secondary } = formatBriefHeading(heading, index);
-                  return (
-                    <section
-                      key={`${index}-${heading.slice(0, 12)}`}
-                      className={`brief-section ${isSectionCollapsed ? 'collapsed' : ''}`.trim()}
-                    >
-                      <button
-                        type="button"
-                        className="brief-section-toggle"
-                        onClick={handleSectionToggle}
-                        aria-expanded={!isSectionCollapsed}
-                        aria-controls={bodyId}
-                      >
-                        <div className="brief-section-heading">
-                          <span className="brief-section-heading-main">{primary}</span>
-                          {secondary && <span className="brief-section-heading-sub">{secondary}</span>}
-                        </div>
-                        <span className="collapse-indicator brief-collapse-indicator" aria-hidden="true">
-                          {isSectionCollapsed ? '+' : '−'}
-                        </span>
-                      </button>
-                      {isSectionCollapsed && collapsedPreview && (
-                        <p className="brief-section-preview">{collapsedPreview}</p>
-                      )}
-                      <div className="brief-section-body" id={bodyId} hidden={isSectionCollapsed}>
-                        <h4 className="sr-only">{heading}</h4>
-                        <p>{displayBody}</p>
-                      </div>
-                    </section>
-                  );
-                })}
-              </div>
-            )}
-            {hiddenCount > 0 && (
-              <button type="button" className="node-preview-toggle" onClick={handleToggle}>
-                {isExpanded
-                  ? 'Collapse brief'
-                  : `Show ${hiddenCount} more section${hiddenCount > 1 ? 's' : ''}`}
               </button>
             )}
           </div>
@@ -1294,7 +1233,83 @@ export default function App() {
               isOpen={isOutputSectionOpen}
               onToggle={() => setIsOutputSectionOpen((prev) => !prev)}
             >
-              {brief ? (
+              {packagedBrief ? (
+                <>
+                  {packagedSections.length === 0 ? (
+                    <div className="node-preview packaged-inspector">
+                      <div className="node-preview-header">
+                        <span className="node-preview-title">{packagedBrief.title}</span>
+                        {packagedMetaLabel && <span className="node-preview-meta">{packagedMetaLabel}</span>}
+                      </div>
+                      <p className="node-card-info">{packagedSummary || 'Brief ready for download.'}</p>
+                    </div>
+                  ) : (
+                  <div className="node-preview packaged-inspector">
+                    <div className="node-preview-header">
+                      <span className="node-preview-title">{packagedBrief.title}</span>
+                      {packagedMetaLabel && <span className="node-preview-meta">{packagedMetaLabel}</span>}
+                    </div>
+                    <p className="node-card-info">{packagedSummary || 'Brief ready for download.'}</p>
+                    <div className={`brief-preview ${expandedPreviews.packagedBrief ? 'expanded' : ''}`.trim()}>
+                      {(expandedPreviews.packagedBrief ? packagedSections : packagedSections.slice(0, 2)).map(
+                        (section, index) => {
+                          const heading = section.title || `Section ${index + 1}`;
+                          const sectionKey = `section-${index}`;
+                          const bodyId = `packagedBrief-${sectionKey}`;
+                          const isSectionCollapsed = collapsedNodeContent.packagedBrief?.[sectionKey] ?? false;
+                          const handleSectionToggle = () => toggleNodeContent('packagedBrief', sectionKey);
+                          const bodyText = section.body;
+                          const displayBody = expandedPreviews.packagedBrief ? bodyText : truncateText(bodyText, 240);
+                          const collapsedPreview = truncateText(bodyText, 200);
+                          const { primary, secondary } = formatBriefHeading(heading, index);
+                          return (
+                            <section
+                              key={`${index}-${heading.slice(0, 12)}`}
+                              className={`brief-section ${isSectionCollapsed ? 'collapsed' : ''}`.trim()}
+                            >
+                              <button
+                                type="button"
+                                className="brief-section-toggle"
+                                onClick={handleSectionToggle}
+                                aria-expanded={!isSectionCollapsed}
+                                aria-controls={bodyId}
+                              >
+                                <div className="brief-section-heading">
+                                  <span className="brief-section-heading-main">{primary}</span>
+                                  {secondary && <span className="brief-section-heading-sub">{secondary}</span>}
+                                </div>
+                                <span className="collapse-indicator brief-collapse-indicator" aria-hidden="true">
+                                  {isSectionCollapsed ? '+' : '−'}
+                                </span>
+                              </button>
+                              {isSectionCollapsed && collapsedPreview && (
+                                <p className="brief-section-preview">{collapsedPreview}</p>
+                              )}
+                              <div className="brief-section-body" id={bodyId} hidden={isSectionCollapsed}>
+                                <p>{displayBody}</p>
+                              </div>
+                            </section>
+                          );
+                        },
+                      )}
+                    </div>
+                    {packagedSections.length > 2 && (
+                      <button type="button" className="node-preview-toggle" onClick={() => togglePreviewExpansion('packagedBrief')}>
+                        {expandedPreviews.packagedBrief
+                          ? 'Collapse brief'
+                          : `Show ${packagedSections.length - 2} more section${packagedSections.length - 2 > 1 ? 's' : ''}`}
+                      </button>
+                    )}
+                  </div>
+                  )}
+                  <pre className="brief-view">{brief || packagedBrief.brief}</pre>
+                  {currentRunId && (
+                    <a className="download-link" href={briefDownloadUrl(currentRunId)} download>
+                      Download Markdown
+                    </a>
+                  )}
+                </>
+              ) : brief ? (
                 <>
                   <pre className="brief-view">{brief}</pre>
                   {currentRunId && (
@@ -1303,6 +1318,8 @@ export default function App() {
                     </a>
                   )}
                 </>
+              ) : runStatus === 'running' ? (
+                <p>Packaging brief…</p>
               ) : (
                 <p>No brief yet. Run the pipeline to generate one.</p>
               )}
