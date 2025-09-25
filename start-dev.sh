@@ -14,6 +14,30 @@ RUNS_DIR="${RUNS_DIR:-$DEFAULT_RUNS_DIR}"
 
 mkdir -p "$LOG_DIR" "$RUNS_DIR"
 
+parse_pid_file() {
+  local file="$1"
+
+  while IFS='=' read -r key raw_value || [[ -n "$key" ]]; do
+    [[ -z "$key" ]] && continue
+
+    case "$key" in
+      BACKEND|FRONTEND)
+        local cleaned="${raw_value%%#*}"
+        cleaned="${cleaned%% *}"
+        cleaned="${cleaned%%(*}"
+        cleaned="${cleaned//[$'\r\n']}"
+
+        if [[ "$cleaned" =~ ^[0-9]+$ ]]; then
+          case "$key" in
+            BACKEND) RECORDED_BACKEND_PID="$cleaned" ;;
+            FRONTEND) RECORDED_FRONTEND_PID="$cleaned" ;;
+          esac
+        fi
+        ;;
+    esac
+  done <"$file"
+}
+
 read_env_value() {
   local file_path="$1"
   local key="$2"
@@ -54,13 +78,24 @@ if [[ -z "$FRONTEND_PORT" ]]; then
   FRONTEND_PORT="$DEFAULT_FRONTEND_PORT"
 fi
 
+RECORDED_BACKEND_PID=""
+RECORDED_FRONTEND_PID=""
+
+if [[ -f "$PID_FILE" ]]; then
+  parse_pid_file "$PID_FILE"
+fi
+
 check_port() {
   local port="$1"
   local label="$2"
+  local output
 
-  if mapfile -t found_pids < <(lsof -ti tcp:"$port" 2>/dev/null); then
-    local count=${#found_pids[@]}
-    echo "Detected $count process(es) on port $port for $label: ${found_pids[*]}"
+  if output=$(lsof -ti tcp:"$port" 2>/dev/null); then
+    local count
+    count=$(printf '%s' "$output" | grep -c '^[0-9]\+')
+    local pids
+    pids=$(printf '%s' "$output" | tr '\n' ' ' | sed 's/ *$//')
+    echo "Detected $count process(es) on port $port for $label: $pids"
     if ((count > 1)); then
       echo "Warning: multiple processes detected on port $port."
     fi
@@ -69,8 +104,41 @@ check_port() {
   fi
 }
 
+ensure_not_running() {
+  local label="$1"
+  local pid="$2"
+
+  if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "A $label dev server is already running with PID $pid."
+      echo "Run ./stop-dev.sh to stop it before starting a new instance."
+      exit 1
+    fi
+  fi
+}
+
+ensure_port_free() {
+  local port="$1"
+  local label="$2"
+
+  local pids
+  if pids=$(lsof -ti tcp:"$port" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//'); then
+    if [[ -n "$pids" ]]; then
+      echo "Port $port is currently in use by PID(s): $pids for $label."
+      echo "Run ./stop-dev.sh or choose a different port before starting the dev server."
+      exit 1
+    fi
+  fi
+}
+
 check_port "$BACKEND_PORT" "backend"
 check_port "$FRONTEND_PORT" "frontend"
+
+ensure_not_running "backend" "$RECORDED_BACKEND_PID"
+ensure_not_running "frontend" "$RECORDED_FRONTEND_PID"
+
+ensure_port_free "$BACKEND_PORT" "backend"
+ensure_port_free "$FRONTEND_PORT" "frontend"
 
 start_service() {
   local label="$1"

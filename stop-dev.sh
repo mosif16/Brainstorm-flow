@@ -93,6 +93,7 @@ stop_service() {
   local pid="$2"
 
   if [[ -z "$pid" ]]; then
+    echo "No recorded PID for $label."
     return
   fi
 
@@ -101,11 +102,18 @@ stop_service() {
     return
   fi
 
+  local pgid=""
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  local signal_target="$pid"
+  if [[ -n "$pgid" && "$pgid" =~ ^[0-9]+$ ]]; then
+    signal_target="-${pgid}"
+  fi
+
   echo "Stopping $label (PID $pid)..."
-  kill "$pid" 2>/dev/null || true
+  kill "$signal_target" 2>/dev/null || true
 
   for _ in {1..10}; do
-    if ! kill -0 "$pid" 2>/dev/null; then
+    if ! kill -0 "$pid" 2>/dev/null && ! kill -0 "$signal_target" 2>/dev/null; then
       echo "$label stopped."
       return
     fi
@@ -113,7 +121,7 @@ stop_service() {
   done
 
   echo "$label did not exit gracefully; sending SIGKILL."
-  kill -9 "$pid" 2>/dev/null || true
+  kill -9 "$signal_target" 2>/dev/null || true
 }
 
 stop_service "backend" "${BACKEND:-}"
@@ -124,15 +132,27 @@ rm -f "$PID_FILE"
 kill_port_processes() {
   local port="$1"
   local label="$2"
+  local output
 
-  if mapfile -t pids < <(lsof -ti tcp:"$port" 2>/dev/null); then
-    echo "Terminating ${#pids[@]} process(es) still bound to port $port for $label: ${pids[*]}"
-    for pid in "${pids[@]}"; do
+  if output=$(lsof -ti tcp:"$port" 2>/dev/null); then
+    local count
+    count=$(printf '%s' "$output" | grep -c '^[0-9]\+')
+    local pids
+    pids=$(printf '%s' "$output" | tr '\n' ' ' | sed 's/ *$//')
+    echo "Terminating $count process(es) still bound to port $port for $label: $pids"
+    printf '%s' "$output" | while IFS= read -r pid; do
+      [[ -z "$pid" ]] && continue
       if kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null || true
+        local pgid
+        pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+        local target="$pid"
+        if [[ -n "$pgid" && "$pgid" =~ ^[0-9]+$ ]]; then
+          target="-${pgid}"
+        fi
+        kill "$target" 2>/dev/null || true
         sleep 0.2
-        if kill -0 "$pid" 2>/dev/null; then
-          kill -9 "$pid" 2>/dev/null || true
+        if kill -0 "$pid" 2>/dev/null || ( [[ "$target" == -* ]] && kill -0 "$target" 2>/dev/null ); then
+          kill -9 "$target" 2>/dev/null || true
         fi
       fi
     done
@@ -143,5 +163,28 @@ kill_port_processes() {
 
 kill_port_processes "$BACKEND_PORT" "backend"
 kill_port_processes "$FRONTEND_PORT" "frontend"
+
+wait_for_port_release() {
+  local port="$1"
+  local label="$2"
+  local output
+
+  for _ in {1..10}; do
+    if ! lsof -ti tcp:"$port" >/dev/null 2>&1; then
+      echo "Confirmed port $port clear for $label."
+      return
+    fi
+    sleep 0.3
+  done
+
+  if output=$(lsof -ti tcp:"$port" 2>/dev/null); then
+    local pids
+    pids=$(printf '%s' "$output" | tr '\n' ' ' | sed 's/ *$//')
+    echo "Warning: port $port still in use by PID(s) $pids for $label after stop attempts."
+  fi
+}
+
+wait_for_port_release "$BACKEND_PORT" "backend"
+wait_for_port_release "$FRONTEND_PORT" "frontend"
 
 echo "Frontend and backend dev servers stopped."
