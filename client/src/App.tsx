@@ -45,6 +45,15 @@ type IdeaPreview = {
   description?: string;
   rationale?: string;
   risk?: string;
+  sourceIndex: number;
+};
+
+type PromotedIdeaNode = {
+  id: string;
+  label: string;
+  idea: IdeaPreview;
+  sourceNodeId: string;
+  createdAt: string;
 };
 
 const initialForm: SeedFormState = {
@@ -121,6 +130,7 @@ export default function App() {
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [expandedPreviews, setExpandedPreviews] = useState<Record<string, boolean>>({});
   const [collapsedNodeContent, setCollapsedNodeContent] = useState<Record<string, Record<string, boolean>>>({});
+  const [ideaNodesByRun, setIdeaNodesByRun] = useState<Record<string, PromotedIdeaNode[]>>({});
   const canvasContentRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dragStateRef = useRef({
@@ -169,14 +179,198 @@ export default function App() {
     fetchRuns().then(setRuns).catch(console.error);
   }, []);
 
-  useRunStream(runStatus === 'running' ? currentRunId : null, (event) => handleRunEvent(event));
+  const activeRunKey = currentRunId ?? '__draft__';
+  const activeIdeaNodes = ideaNodesByRun[activeRunKey] ?? [];
+
+  const ideaNodeById = useMemo(() => {
+    if (!activeIdeaNodes.length) return {} as Record<string, PromotedIdeaNode>;
+    const map: Record<string, PromotedIdeaNode> = {};
+    for (const node of activeIdeaNodes) {
+      map[node.id] = node;
+    }
+    return map;
+  }, [activeIdeaNodes]);
+
+  const createIdeaNodeId = useCallback(
+    (index: number) => {
+      const runFragment = activeRunKey === '__draft__' ? 'draft' : activeRunKey;
+      return `${runFragment}-idea-${index + 1}`;
+    },
+    [activeRunKey],
+  );
+
+  const handleFocusIdeaNode = useCallback(
+    (nodeId: string) => {
+      setSelectedNodeId(nodeId);
+      setExpandedPreviews((prev) => ({
+        ...prev,
+        [nodeId]: true,
+      }));
+    },
+    [],
+  );
+
+  const handlePromoteIdea = useCallback(
+    (idea: IdeaPreview) => {
+      if (typeof idea?.sourceIndex !== 'number') return;
+      const nodeId = createIdeaNodeId(idea.sourceIndex);
+      setIdeaNodesByRun((prev) => {
+        const existingNodes = prev[activeRunKey] ?? [];
+        const existingIndex = existingNodes.findIndex((node) => node.idea.sourceIndex === idea.sourceIndex);
+        if (existingIndex >= 0) {
+          const existingNode = existingNodes[existingIndex];
+          const ideaUnchanged =
+            existingNode.label === idea.title &&
+            existingNode.idea.title === idea.title &&
+            existingNode.idea.description === idea.description &&
+            existingNode.idea.rationale === idea.rationale &&
+            existingNode.idea.risk === idea.risk;
+          if (ideaUnchanged) {
+            return prev;
+          }
+          const nextNodes = [...existingNodes];
+          nextNodes[existingIndex] = {
+            ...existingNode,
+            id: existingNode.id || nodeId,
+            label: idea.title,
+            idea,
+          };
+          return {
+            ...prev,
+            [activeRunKey]: nextNodes,
+          };
+        }
+
+        const nextNodes = [
+          ...existingNodes,
+          {
+            id: nodeId,
+            label: idea.title,
+            idea,
+            sourceNodeId: 'divergeGenerate',
+            createdAt: new Date().toISOString(),
+          } satisfies PromotedIdeaNode,
+        ];
+
+        return {
+          ...prev,
+          [activeRunKey]: nextNodes,
+        };
+      });
+      handleFocusIdeaNode(nodeId);
+    },
+    [activeRunKey, createIdeaNodeId, handleFocusIdeaNode],
+  );
+
+  const handleRemoveIdeaNode = useCallback(
+    (nodeId: string) => {
+      setIdeaNodesByRun((prev) => {
+        const existingNodes = prev[activeRunKey] ?? [];
+        if (!existingNodes.length) return prev;
+        const nextNodes = existingNodes.filter((node) => node.id !== nodeId);
+        if (nextNodes.length === existingNodes.length) return prev;
+        return {
+          ...prev,
+          [activeRunKey]: nextNodes,
+        };
+      });
+      setCollapsedNodeContent((prev) => {
+        if (!prev[nodeId]) return prev;
+        const next = { ...prev };
+        delete next[nodeId];
+        return next;
+      });
+      setExpandedPreviews((prev) => {
+        if (!(nodeId in prev)) return prev;
+        const next = { ...prev };
+        delete next[nodeId];
+        return next;
+      });
+      if (selectedNodeId === nodeId) {
+        setSelectedNodeId('divergeGenerate');
+      }
+    },
+    [activeRunKey, selectedNodeId],
+  );
+
+  const syncPromotedIdeas = useCallback(
+    (runKey: string, ideas: IdeaPreview[]) => {
+      const ideaMap = new Map(ideas.map((idea) => [idea.sourceIndex, idea]));
+      setIdeaNodesByRun((prev) => {
+        const existingNodes = prev[runKey];
+        if (!existingNodes || existingNodes.length === 0) {
+          return prev;
+        }
+        let changed = false;
+        const nextNodes: PromotedIdeaNode[] = [];
+        for (const node of existingNodes) {
+          const updatedIdea = ideaMap.get(node.idea.sourceIndex);
+          if (!updatedIdea) {
+            changed = true;
+            continue;
+          }
+          if (
+            node.idea.title !== updatedIdea.title ||
+            node.idea.description !== updatedIdea.description ||
+            node.idea.rationale !== updatedIdea.rationale ||
+            node.idea.risk !== updatedIdea.risk ||
+            node.label !== updatedIdea.title
+          ) {
+            nextNodes.push({ ...node, idea: updatedIdea, label: updatedIdea.title });
+            changed = true;
+          } else {
+            nextNodes.push(node);
+          }
+        }
+        if (!changed) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [runKey]: nextNodes,
+        };
+      });
+    },
+    [],
+  );
+
+  const ideaNodeDetails = useMemo(() => {
+    if (!activeIdeaNodes.length) return {} as Record<string, NodeData>;
+    const map: Record<string, NodeData> = {};
+    for (const node of activeIdeaNodes) {
+      map[node.id] = {
+        status: 'completed',
+        output: node.idea,
+        startedAt: node.createdAt,
+        finishedAt: node.createdAt,
+      };
+    }
+    return map;
+  }, [activeIdeaNodes]);
+
+  const combinedNodeDetails = useMemo(() => {
+    if (!Object.keys(ideaNodeDetails).length) return nodeDetails;
+    return { ...nodeDetails, ...ideaNodeDetails };
+  }, [ideaNodeDetails, nodeDetails]);
 
   const selectedNode = useMemo(() => {
     if (!selectedNodeId) return null;
-    return nodeDetails[selectedNodeId] || null;
-  }, [nodeDetails, selectedNodeId]);
+    return combinedNodeDetails[selectedNodeId] || null;
+  }, [combinedNodeDetails, selectedNodeId]);
 
-  const graphNodes = graph?.nodes ?? [];
+  const baseGraphNodes = graph?.nodes ?? [];
+  const ideaGraphNodes = useMemo(
+    () =>
+      activeIdeaNodes.map((node) => ({
+        id: node.id,
+        label: node.label,
+        type: 'idea' as const,
+      })),
+    [activeIdeaNodes],
+  );
+
+  const graphNodes = useMemo(() => [...baseGraphNodes, ...ideaGraphNodes], [baseGraphNodes, ideaGraphNodes]);
+
   const graphNodeById = useMemo(() => {
     const map: Record<string, Graph['nodes'][number]> = {};
     for (const node of graphNodes) {
@@ -185,15 +379,41 @@ export default function App() {
     return map;
   }, [graphNodes]);
 
+  const baseGraphEdges = graph?.edges ?? [];
+  const ideaGraphEdges = useMemo(
+    () =>
+      activeIdeaNodes.map((node) => ({
+        source: node.sourceNodeId,
+        target: node.id,
+      })),
+    [activeIdeaNodes],
+  );
+
+  const graphEdges = useMemo(() => [...baseGraphEdges, ...ideaGraphEdges], [baseGraphEdges, ideaGraphEdges]);
+
   useEffect(() => {
     if (!graphNodes.length) return;
     setNodePositions((prev) => {
       let changed = false;
       const next: Record<string, { x: number; y: number }> = { ...prev };
+      const ideaIndexById: Record<string, number> = {};
+      activeIdeaNodes.forEach((ideaNode, index) => {
+        ideaIndexById[ideaNode.id] = index;
+      });
 
       for (const node of graphNodes) {
         if (!next[node.id]) {
-          next[node.id] = { x: 0, y: 0 };
+          if (node.type === 'idea') {
+            const divergePosition = next['divergeGenerate'] ?? prev['divergeGenerate'] ?? { x: 0, y: 0 };
+            const ideaIndex = ideaIndexById[node.id] ?? 0;
+            const verticalSpacing = 180;
+            next[node.id] = {
+              x: divergePosition.x + 320,
+              y: divergePosition.y + ideaIndex * verticalSpacing,
+            };
+          } else {
+            next[node.id] = { x: 0, y: 0 };
+          }
           changed = true;
         }
       }
@@ -207,11 +427,11 @@ export default function App() {
 
       return changed ? next : prev;
     });
-  }, [graphNodes]);
+  }, [activeIdeaNodes, graphNodes]);
 
   const measureEdges = useCallback(() => {
     const canvasEl = canvasContentRef.current;
-    if (!canvasEl || !graph?.edges?.length) {
+    if (!canvasEl || !graphEdges.length) {
       setEdgeLines([]);
       setCanvasSize({ width: 0, height: 0 });
       return;
@@ -236,7 +456,7 @@ export default function App() {
 
     let hasMeasurements = false;
 
-    for (const edge of graph.edges) {
+    for (const edge of graphEdges) {
       const sourceEl = nodeRefs.current[edge.source];
       const targetEl = nodeRefs.current[edge.target];
       if (!sourceEl || !targetEl) continue;
@@ -251,13 +471,13 @@ export default function App() {
       const endY = targetRect.top + targetRect.height / 2 - canvasRect.top;
       const midX = (startX + endX) / 2;
       const midY = (startY + endY) / 2;
-      const sourceStatus = nodeDetails[edge.source]?.status;
-      const targetStatus = nodeDetails[edge.target]?.status;
+      const sourceStatus = combinedNodeDetails[edge.source]?.status;
+      const targetStatus = combinedNodeDetails[edge.target]?.status;
       const status: NodeStatus = sourceStatus || targetStatus || 'pending';
       const sourceLabel = graphNodeById[edge.source]?.label || edge.source;
       const targetLabel = graphNodeById[edge.target]?.label || edge.target;
 
-      const sourceOutput = nodeDetails[edge.source]?.output;
+      const sourceOutput = combinedNodeDetails[edge.source]?.output;
       let summary = 'No output yet';
       if (sourceOutput) {
         if (Array.isArray(sourceOutput)) {
@@ -295,7 +515,7 @@ export default function App() {
     }
     setEdgeLines(nextLines);
     setCanvasSize({ width: canvasRect.width, height: canvasRect.height });
-  }, [graph?.edges, graphNodeById, nodeDetails]);
+  }, [combinedNodeDetails, graphEdges, graphNodeById]);
 
   useLayoutEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -436,97 +656,14 @@ export default function App() {
     setSelectedNodeId(nodeId);
   };
 
-  const handleRunEvent = (event: RunEvent) => {
-    if (!event) return;
-    if (event.type === 'node-status') {
-      setNodeDetails((prev) => ({
-        ...prev,
-        [event.nodeId]: {
-          ...(prev[event.nodeId] || { status: 'pending' }),
-          status: event.status,
-          error: event.error,
-          ...(event.status === 'running' ? { startedAt: event.timestamp } : { finishedAt: event.timestamp }),
-        },
-      }));
-    } else if (event.type === 'node-io') {
-      setNodeDetails((prev) => ({
-        ...prev,
-        [event.nodeId]: {
-          ...(prev[event.nodeId] || { status: 'pending' }),
-          output: event.payload,
-        },
-      }));
-      setCollapsedNodeContent((prev) => {
-        if (!prev[event.nodeId]) return prev;
-        const next = { ...prev };
-        delete next[event.nodeId];
-        return next;
-      });
-    } else if (event.type === 'packaged-brief') {
-      setPackagedBrief(event.payload);
-      if (event.payload?.brief) {
-        setBrief(event.payload.brief);
-      }
-      setExpandedPreviews((prev) => ({
-        ...prev,
-        packagedBrief: false,
-      }));
-      setCollapsedNodeContent((prev) => {
-        if (!prev.packagedBrief) return prev;
-        const next = { ...prev };
-        delete next.packagedBrief;
-        return next;
-      });
-    } else if (event.type === 'run-status') {
-      setRunStatus(event.status);
-      if (event.status === 'completed' || event.status === 'failed') {
-        refreshRunDetail(event.runId);
-      }
-    }
-  };
-
-  const refreshRunDetail = async (runId: string) => {
-    try {
-      const detail = await fetchRunDetail(runId);
-      applyRunDetail(detail);
-      const updatedRuns = await fetchRuns();
-      setRuns(updatedRuns);
-    } catch (err) {
-      console.error('Failed to load run detail', err);
-    }
-  };
-
-  const applyRunDetail = (detail: RunDetailResponse) => {
-    const merged: Record<string, NodeData> = {};
-    for (const [nodeId, nodeState] of Object.entries(detail.state.nodes)) {
-      const io = detail.nodeIO[nodeId] as Record<string, unknown> | undefined;
-      const timestamps = (io?.timestamps as Record<string, string>) || {};
-      merged[nodeId] = {
-        status: nodeState.status,
-        input: io?.input ?? nodeState.input,
-        output: io?.output ?? nodeState.output,
-        error: (io as any)?.error ?? nodeState.error,
-        startedAt: nodeState.startedAt ?? timestamps.startedAt,
-        finishedAt: nodeState.finishedAt ?? timestamps.finishedAt,
-      };
-    }
-    setNodeDetails(merged);
-    if (detail.brief) {
-      setBrief(detail.brief);
-    } else if (detail.packagedBrief?.brief) {
-      setBrief(detail.packagedBrief.brief);
-    }
-    if (detail.usage) setUsage(detail.usage);
-    const packaged = detail.packagedBrief ?? detail.state.packagedBrief;
-    setPackagedBrief(packaged ?? null);
-    setCollapsedNodeContent({});
-  };
-
   const handleInputChange = (field: keyof SeedFormState) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
   };
 
-  const resetRunState = (seedPayload: { goal: string; audience: string; constraints: string; n?: number; k?: number }) => {
+  const resetRunState = (
+    seedPayload: { goal: string; audience: string; constraints: string; n?: number; k?: number },
+    runId?: string,
+  ) => {
     const seedNode: NodeData = { status: 'pending', input: seedPayload, output: null };
     const divergeNode: NodeData = { status: 'pending', input: { n: seedPayload.n, seed: seedPayload }, output: null };
     setNodeDetails({
@@ -539,6 +676,11 @@ export default function App() {
     setSelectedNodeId('seed');
     setExpandedPreviews({});
     setCollapsedNodeContent({});
+    const runKey = runId ?? '__draft__';
+    setIdeaNodesByRun((prev) => ({
+      ...prev,
+      [runKey]: [],
+    }));
   };
 
   const handleStartRun = async () => {
@@ -575,7 +717,7 @@ export default function App() {
       const response = await startRun(payload);
       setCurrentRunId(response.runId);
       setRunStatus('running');
-      resetRunState(payload);
+      resetRunState(payload, response.runId);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Failed to start run.');
@@ -588,6 +730,13 @@ export default function App() {
     setCurrentRunId(run.id);
     setRunStatus(run.status);
     setSelectedNodeId('seed');
+    setIdeaNodesByRun((prev) => {
+      if (run.id in prev) return prev;
+      return {
+        ...prev,
+        [run.id]: [],
+      };
+    });
     await refreshRunDetail(run.id);
   };
 
@@ -611,12 +760,12 @@ export default function App() {
     const ideasValue = (value as { ideas?: unknown }).ideas;
     if (!Array.isArray(ideasValue)) return [];
     const sanitized: IdeaPreview[] = [];
-    for (const idea of ideasValue) {
-      if (!idea || typeof idea !== 'object') continue;
+    ideasValue.forEach((idea, index) => {
+      if (!idea || typeof idea !== 'object') return;
       const { title, description, rationale, risk } = idea as Record<string, unknown>;
-      if (typeof title !== 'string') continue;
+      if (typeof title !== 'string') return;
       const cleanedTitle = tidyText(title);
-      if (!cleanedTitle) continue;
+      if (!cleanedTitle) return;
       const cleanedDescription =
         typeof description === 'string' && description.trim() ? tidyText(description) : undefined;
       const cleanedRationale =
@@ -624,11 +773,12 @@ export default function App() {
       const cleanedRisk = typeof risk === 'string' && risk.trim() ? tidyText(risk) : undefined;
       sanitized.push({
         title: cleanedTitle,
+        sourceIndex: index,
         ...(cleanedDescription ? { description: cleanedDescription } : {}),
         ...(cleanedRationale ? { rationale: cleanedRationale } : {}),
         ...(cleanedRisk ? { risk: cleanedRisk } : {}),
       });
-    }
+    });
     return sanitized;
   }, [tidyText]);
 
@@ -685,6 +835,125 @@ export default function App() {
     return tidyText(packagedBrief.summary);
   }, [packagedBrief, tidyText]);
 
+  const applyRunDetail = useCallback(
+    (detail: RunDetailResponse) => {
+      const merged: Record<string, NodeData> = {};
+      for (const [nodeId, nodeState] of Object.entries(detail.state.nodes)) {
+        const io = detail.nodeIO[nodeId] as Record<string, unknown> | undefined;
+        const timestamps = (io?.timestamps as Record<string, string>) || {};
+        merged[nodeId] = {
+          status: nodeState.status,
+          input: io?.input ?? nodeState.input,
+          output: io?.output ?? nodeState.output,
+          error: (io as any)?.error ?? nodeState.error,
+          startedAt: nodeState.startedAt ?? timestamps.startedAt,
+          finishedAt: nodeState.finishedAt ?? timestamps.finishedAt,
+        };
+      }
+      setNodeDetails(merged);
+
+      const runKey = detail.state.id ?? '__draft__';
+      setIdeaNodesByRun((prev) => {
+        if (runKey in prev) return prev;
+        return {
+          ...prev,
+          [runKey]: [],
+        };
+      });
+
+      const divergeOutput = merged.divergeGenerate?.output;
+      if (divergeOutput) {
+        const divergeIdeas = extractIdeas(divergeOutput);
+        syncPromotedIdeas(runKey, divergeIdeas);
+      }
+
+      if (detail.brief) {
+        setBrief(detail.brief);
+      } else if (detail.packagedBrief?.brief) {
+        setBrief(detail.packagedBrief.brief);
+      }
+      if (detail.usage) setUsage(detail.usage);
+      const packaged = detail.packagedBrief ?? detail.state.packagedBrief;
+      setPackagedBrief(packaged ?? null);
+      setCollapsedNodeContent({});
+      setExpandedPreviews({});
+    },
+    [extractIdeas, syncPromotedIdeas],
+  );
+
+  const refreshRunDetail = useCallback(
+    async (runId: string) => {
+      try {
+        const detail = await fetchRunDetail(runId);
+        applyRunDetail(detail);
+        const updatedRuns = await fetchRuns();
+        setRuns(updatedRuns);
+      } catch (err) {
+        console.error('Failed to load run detail', err);
+      }
+    },
+    [applyRunDetail],
+  );
+
+  const handleRunEvent = useCallback(
+    (event: RunEvent) => {
+      if (!event) return;
+      if (event.type === 'node-status') {
+        setNodeDetails((prev) => ({
+          ...prev,
+          [event.nodeId]: {
+            ...(prev[event.nodeId] || { status: 'pending' }),
+            status: event.status,
+            error: event.error,
+            ...(event.status === 'running' ? { startedAt: event.timestamp } : { finishedAt: event.timestamp }),
+          },
+        }));
+      } else if (event.type === 'node-io') {
+        setNodeDetails((prev) => ({
+          ...prev,
+          [event.nodeId]: {
+            ...(prev[event.nodeId] || { status: 'pending' }),
+            output: event.payload,
+          },
+        }));
+        setCollapsedNodeContent((prev) => {
+          if (!prev[event.nodeId]) return prev;
+          const next = { ...prev };
+          delete next[event.nodeId];
+          return next;
+        });
+        if (event.nodeId === 'divergeGenerate') {
+          const ideas = extractIdeas(event.payload);
+          const runKey = event.runId ?? activeRunKey;
+          syncPromotedIdeas(runKey, ideas);
+        }
+      } else if (event.type === 'packaged-brief') {
+        setPackagedBrief(event.payload);
+        if (event.payload?.brief) {
+          setBrief(event.payload.brief);
+        }
+        setExpandedPreviews((prev) => ({
+          ...prev,
+          packagedBrief: false,
+        }));
+        setCollapsedNodeContent((prev) => {
+          if (!prev.packagedBrief) return prev;
+          const next = { ...prev };
+          delete next.packagedBrief;
+          return next;
+        });
+      } else if (event.type === 'run-status') {
+        setRunStatus(event.status);
+        if (event.status === 'completed' || event.status === 'failed') {
+          refreshRunDetail(event.runId);
+        }
+      }
+    },
+    [activeRunKey, extractIdeas, refreshRunDetail, syncPromotedIdeas],
+  );
+
+  useRunStream(runStatus === 'running' ? currentRunId : null, handleRunEvent);
+
   const togglePreviewExpansion = useCallback((nodeId: string) => {
     setExpandedPreviews((prev) => ({
       ...prev,
@@ -740,6 +1009,7 @@ export default function App() {
     (nodeId: string, node: NodeData | undefined) => {
       const isExpanded = expandedPreviews[nodeId] ?? false;
       const handleToggle = () => togglePreviewExpansion(nodeId);
+      const graphNode = graphNodeById[nodeId];
 
       if (!node || node.status === 'pending') {
         return (
@@ -753,6 +1023,59 @@ export default function App() {
         return (
           <div className="node-preview">
             <p className="error-text">Error: {node.error}</p>
+          </div>
+        );
+      }
+
+      if (graphNode?.type === 'idea') {
+        const promoted = ideaNodeById[nodeId];
+        if (!promoted) {
+          return (
+            <div className="node-preview muted">
+              <p className="node-card-info muted">Idea details unavailable.</p>
+            </div>
+          );
+        }
+        const { idea } = promoted;
+        const description = idea.description ?? null;
+        const rationale = idea.rationale ?? null;
+        const risk = idea.risk ?? null;
+        const summaryLabel = `Idea #${idea.sourceIndex + 1}`;
+
+        return (
+          <div className="node-preview idea-node-preview">
+            <div className="node-preview-header">
+              <span className="node-preview-title">{idea.title}</span>
+              <span className="node-preview-meta">{summaryLabel}</span>
+            </div>
+            <div className="idea-card-body" role="group" aria-label={`Details for ${idea.title}`}>
+              {description && <p>{description}</p>}
+              {rationale && (
+                <p className="idea-card-meta">
+                  <strong>Rationale:</strong> {rationale}
+                </p>
+              )}
+              {risk && <p className="idea-card-risk">Risk: {risk}</p>}
+              {!description && !rationale && !risk && (
+                <p className="node-card-info muted">No additional details captured for this idea.</p>
+              )}
+            </div>
+            <div className="idea-card-actions">
+              <button
+                type="button"
+                className="idea-card-action secondary"
+                onClick={() => handleRemoveIdeaNode(nodeId)}
+              >
+                Remove node
+              </button>
+              <button
+                type="button"
+                className="idea-card-action"
+                onClick={() => handleFocusIdeaNode('divergeGenerate')}
+              >
+                View in Diverge node
+              </button>
+            </div>
           </div>
         );
       }
@@ -786,8 +1109,9 @@ export default function App() {
             </div>
             {summary && <p className="node-card-info">{summary}</p>}
             <div className="idea-card-list" aria-label="Generated ideas">
-              {visibleIdeas.map((idea, index) => {
-                const ideaKey = `idea-${index}`;
+              {visibleIdeas.map((idea) => {
+                const sourceIndex = typeof idea.sourceIndex === 'number' ? idea.sourceIndex : 0;
+                const ideaKey = `idea-${sourceIndex}`;
                 const contentId = `${nodeId}-${ideaKey}`;
                 const isIdeaCollapsed = collapsedNodeContent[nodeId]?.[ideaKey] ?? false;
                 const handleIdeaToggle = () => toggleNodeContent(nodeId, ideaKey);
@@ -813,10 +1137,18 @@ export default function App() {
                   : idea.risk
                   ? truncateText(idea.risk, 110)
                   : null;
+                const promotedNode = activeIdeaNodes.find((node) => node.idea.sourceIndex === sourceIndex);
+                const promotedNodeId = promotedNode?.id ?? createIdeaNodeId(sourceIndex);
+                const isPromoted = Boolean(promotedNode);
+                const promoteIdea = () => handlePromoteIdea(idea);
+                const focusIdea = () => handleFocusIdeaNode(promotedNodeId);
+                const removeIdea = () => handleRemoveIdeaNode(promotedNodeId);
                 return (
                   <article
-                    key={`${idea.title}-${index}`}
-                    className={`idea-card ${isIdeaCollapsed ? 'collapsed' : ''}`.trim()}
+                    key={promotedNodeId}
+                    className={`idea-card ${isIdeaCollapsed ? 'collapsed' : ''} ${
+                      isPromoted ? 'promoted' : ''
+                    }`.trim()}
                   >
                     <button
                       type="button"
@@ -826,6 +1158,7 @@ export default function App() {
                       aria-controls={contentId}
                     >
                       <span className="idea-card-title">{idea.title}</span>
+                      {isPromoted && <span className="idea-card-chip">Node created</span>}
                       <span className="collapse-indicator idea-collapse-indicator" aria-hidden="true">
                         {isIdeaCollapsed ? '+' : '−'}
                       </span>
@@ -841,6 +1174,27 @@ export default function App() {
                         </p>
                       )}
                       {risk && <p className="idea-card-risk">Risk: {risk}</p>}
+                    </div>
+                    <div className="idea-card-actions">
+                      {!isPromoted && (
+                        <button type="button" className="idea-card-action" onClick={promoteIdea}>
+                          Pull into node
+                        </button>
+                      )}
+                      {isPromoted && (
+                        <>
+                          <button type="button" className="idea-card-action" onClick={focusIdea}>
+                            View node
+                          </button>
+                          <button
+                            type="button"
+                            className="idea-card-action secondary"
+                            onClick={removeIdea}
+                          >
+                            Remove node
+                          </button>
+                        </>
+                      )}
                     </div>
                   </article>
                 );
@@ -911,9 +1265,16 @@ export default function App() {
     [
       expandedPreviews,
       collapsedNodeContent,
+      activeIdeaNodes,
+      createIdeaNodeId,
       extractBrief,
       extractIdeas,
       formatBriefHeading,
+      graphNodeById,
+      handleFocusIdeaNode,
+      handlePromoteIdea,
+      handleRemoveIdeaNode,
+      ideaNodeById,
       tidyText,
       toggleNodeContent,
       togglePreviewExpansion,
@@ -1079,7 +1440,7 @@ export default function App() {
                 </div>
               )}
               {graphNodes.map((node) => {
-                const nodeData = nodeDetails[node.id];
+                const nodeData = combinedNodeDetails[node.id];
                 const status = nodeData?.status ?? 'pending';
                 const isSeedNode = node.id === 'seed';
                 const position = nodePositions[node.id] ?? { x: 0, y: 0 };
