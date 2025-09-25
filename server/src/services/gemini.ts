@@ -1,7 +1,7 @@
 import { SeedInput, Idea, GeminiUsage } from '../pipeline/types';
 import type { AppConfig } from '../utils/env';
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'models/gemini-1.5-pro-latest';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'models/gemini-2.5-flash-lite';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 type GeminiCandidate = {

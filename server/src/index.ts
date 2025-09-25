@@ -1,3 +1,4 @@
+import fs from 'fs/promises';
 import cors from 'cors';
 import express from 'express';
 import path from 'path';
@@ -8,6 +9,8 @@ import { graphRouter } from './routes/graphRoutes';
 async function bootstrap() {
   const config = loadConfig();
   const app = express();
+
+  await fs.mkdir(config.runsDir, { recursive: true });
 
   app.use(cors());
   app.use(express.json({ limit: '1mb' }));

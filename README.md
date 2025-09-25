@@ -10,7 +10,7 @@ Full-stack brainstorming assistant that runs a three-node pipeline (Seed → Div
 
 ## Prerequisites
 - Node.js 18+ (required for native `fetch`).
-- A valid `GEMINI_API_KEY` with access to the Gemini `gemini-1.5-pro-latest` model (or override via `GEMINI_MODEL`).
+- A valid `GEMINI_API_KEY` with access to the Gemini `models/gemini-2.5-flash-lite` model (or override via `GEMINI_MODEL`).
 
 ## Setup
 ```bash
@@ -36,7 +36,7 @@ Then edit:
   - `PORT=4000` (optional override)
   - `DEFAULT_N=6`, `DEFAULT_K=3` (pipeline defaults)
   - `RUNS_DIR=../runs` (artifact location)
-  - `GEMINI_MODEL=models/gemini-1.5-pro-latest` (optional model override)
+  - `GEMINI_MODEL=models/gemini-2.5-flash-lite` (optional model override)
 - `client/.env` for frontend config:
   - `VITE_API_BASE=http://localhost:4000`
   - optionally `VITE_PORT=5173`

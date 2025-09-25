@@ -8,8 +8,11 @@ LOG_DIR="$ROOT_DIR/logs/dev"
 PID_FILE="$ROOT_DIR/.devservers.pids"
 DEFAULT_BACKEND_PORT=4000
 DEFAULT_FRONTEND_PORT=5173
+DEFAULT_RUNS_DIR="$ROOT_DIR/runs"
 
-mkdir -p "$LOG_DIR"
+RUNS_DIR="${RUNS_DIR:-$DEFAULT_RUNS_DIR}"
+
+mkdir -p "$LOG_DIR" "$RUNS_DIR"
 
 read_env_value() {
   local file_path="$1"
@@ -73,23 +76,26 @@ start_service() {
   local label="$1"
   local path="$2"
   local log_file="$3"
+  shift 3
+  local -a env_args=("$@")
 
   echo "Starting $label (logs: $log_file)..."
-  nohup npm --prefix "$path" run dev >"$log_file" 2>&1 &
+  nohup env RUNS_DIR="$RUNS_DIR" "${env_args[@]}" npm --prefix "$path" run dev >"$log_file" 2>&1 &
   local pid=$!
   disown "$pid"
   echo "$label started with PID $pid."
   echo "$pid"
 }
 
-BACKEND_PID=$(start_service "backend" "$SERVER_DIR" "$LOG_DIR/backend-dev.log")
-FRONTEND_PID=$(start_service "frontend" "$CLIENT_DIR" "$LOG_DIR/frontend-dev.log")
+BACKEND_PID=$(start_service "backend" "$SERVER_DIR" "$LOG_DIR/backend-dev.log" "PORT=$BACKEND_PORT")
+FRONTEND_PID=$(start_service "frontend" "$CLIENT_DIR" "$LOG_DIR/frontend-dev.log" "VITE_PORT=$FRONTEND_PORT" "VITE_API_BASE=${VITE_API_BASE:-http://localhost:$BACKEND_PORT}")
 
 {
   echo "BACKEND=$BACKEND_PID"
   echo "FRONTEND=$FRONTEND_PID"
   echo "BACKEND_PORT=$BACKEND_PORT"
   echo "FRONTEND_PORT=$FRONTEND_PORT"
+  echo "RUNS_DIR=$RUNS_DIR"
 } >"$PID_FILE"
 
 echo "Backend and frontend dev servers are launching. PID info recorded in $PID_FILE."
