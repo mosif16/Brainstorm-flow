@@ -1,0 +1,32 @@
+# Node dependency directories
+node_modules/
+
+# Build outputs
+client/dist/
+server/dist/
+dist/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Runtime artifacts
+runs/
+logs/
+*.log
+
+# Environment files
+.env
+.env.*
+*.env
+*.env.*
+!*.env.example
+!*.env.sample
+
+# Local tooling
+.devservers.pids
+
+# OS / editor clutter
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
