@@ -886,6 +886,12 @@ input:focus {
   margin-top: 0.25rem;
 }
 
+.idea-card-actions.tertiary {
+  border-top: 1px dashed rgba(62, 84, 112, 0.4);
+  padding-top: 0.35rem;
+  margin-top: 0.5rem;
+}
+
 .idea-card-action {
   border: 1px solid #2c3a4b;
   background: rgba(16, 23, 34, 0.9);
@@ -905,6 +911,19 @@ input:focus {
   border-color: #5a8dee;
   color: #0b1118;
   outline: none;
+}
+
+.idea-card-action.outline {
+  background: transparent;
+  border-color: rgba(90, 141, 238, 0.35);
+  color: #c8dcff;
+}
+
+.idea-card-action.outline:hover,
+.idea-card-action.outline:focus-visible {
+  background: rgba(90, 141, 238, 0.2);
+  border-color: rgba(90, 141, 238, 0.6);
+  color: #0b1118;
 }
 
 .idea-card-action.secondary {
@@ -954,6 +973,84 @@ input:focus {
 
 .idea-node-preview .idea-card-actions {
   justify-content: flex-end;
+}
+
+.refinement-summary-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.refinement-summary-button {
+  border: 1px solid rgba(90, 141, 238, 0.35);
+  background: rgba(10, 16, 24, 0.8);
+  color: #dce8ff;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.refinement-summary-button:hover,
+.refinement-summary-button:focus-visible {
+  background: #5a8dee;
+  border-color: #5a8dee;
+  color: #0b1118;
+  outline: none;
+}
+
+.refinement-node-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.refinement-node-preview .idea-card-actions {
+  justify-content: flex-end;
+}
+
+.refinement-description {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #9bb2cf;
+  margin: 0;
+}
+
+.refinement-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.refinement-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: #9bb2cf;
+}
+
+.refinement-form textarea {
+  background: #0b121c;
+  color: #dce8ff;
+  border: 1px solid rgba(39, 55, 74, 0.8);
+  border-radius: 8px;
+  padding: 0.55rem 0.6rem;
+  font-family: inherit;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  resize: vertical;
+}
+
+.refinement-form textarea:focus-visible {
+  border-color: #5a8dee;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(90, 141, 238, 0.25);
 }
 
 .brief-section-toggle {

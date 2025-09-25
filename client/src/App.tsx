@@ -56,6 +56,96 @@ type PromotedIdeaNode = {
   createdAt: string;
 };
 
+type RefinementNodeKind = 'ui-flow' | 'capability-breakdown' | 'experience-polish';
+
+interface RefinementFieldDefinition {
+  key: string;
+  label: string;
+  placeholder: string;
+  rows?: number;
+}
+
+const REFINEMENT_TEMPLATES: Record<RefinementNodeKind, {
+  label: string;
+  description: string;
+  fields: RefinementFieldDefinition[];
+}> = {
+  'ui-flow': {
+    label: 'UI Flow Sketch',
+    description:
+      'Outline the user journey for this concept so design can translate it into flow diagrams or wireframes.',
+    fields: [
+      { key: 'entryPoints', label: 'Entry points', placeholder: 'Where does the user encounter this idea first?', rows: 2 },
+      {
+        key: 'primaryInteractions',
+        label: 'Primary interactions',
+        placeholder: 'List the key screens, steps, or components the user navigates through.',
+        rows: 3,
+      },
+      { key: 'edgeCases', label: 'Edge cases', placeholder: 'Capture failure states or alternate flows to watch.', rows: 3 },
+      {
+        key: 'successCriteria',
+        label: 'Success criteria',
+        placeholder: 'Define what a successful experience looks like for users and the business.',
+        rows: 2,
+      },
+    ],
+  },
+  'capability-breakdown': {
+    label: 'Capability Breakdown',
+    description:
+      'Identify the technical, operational, and data capabilities needed to bring this idea to life.',
+    fields: [
+      { key: 'apis', label: 'APIs & services', placeholder: 'List new or existing APIs / services required.', rows: 3 },
+      { key: 'dataModels', label: 'Data models', placeholder: 'Which data structures or storage updates are needed?', rows: 3 },
+      { key: 'integrations', label: 'Integrations', placeholder: 'Call out internal or third-party integrations.', rows: 3 },
+      {
+        key: 'dependencies',
+        label: 'Dependencies & sequencing',
+        placeholder: 'Note cross-team dependencies, sequencing, or blockers.',
+        rows: 3,
+      },
+    ],
+  },
+  'experience-polish': {
+    label: 'Experience Polish Checklist',
+    description:
+      'Track the experience-level considerations that ensure the idea ships with the right level of quality.',
+    fields: [
+      {
+        key: 'accessibility',
+        label: 'Accessibility',
+        placeholder: 'Contrast, keyboard paths, semantics, assistive tech behaviours…',
+        rows: 3,
+      },
+      {
+        key: 'performance',
+        label: 'Performance',
+        placeholder: 'Targets, instrumentation, perceived-performance tactics, budgets.',
+        rows: 2,
+      },
+      { key: 'localization', label: 'Localization & voice', placeholder: 'Language, tone, regional content, formatting.', rows: 2 },
+      {
+        key: 'analytics',
+        label: 'Analytics & learning',
+        placeholder: 'Event naming, dashboards, cohorts, feedback capture loops.',
+        rows: 2,
+      },
+    ],
+  },
+};
+
+const REFINEMENT_ORDER: RefinementNodeKind[] = ['ui-flow', 'capability-breakdown', 'experience-polish'];
+
+type RefinementNode = {
+  id: string;
+  label: string;
+  kind: RefinementNodeKind;
+  sourceNodeId: string;
+  createdAt: string;
+  fields: Record<string, string>;
+};
+
 const initialForm: SeedFormState = {
   goal: '',
   audience: '',
@@ -131,6 +221,7 @@ export default function App() {
   const [expandedPreviews, setExpandedPreviews] = useState<Record<string, boolean>>({});
   const [collapsedNodeContent, setCollapsedNodeContent] = useState<Record<string, Record<string, boolean>>>({});
   const [ideaNodesByRun, setIdeaNodesByRun] = useState<Record<string, PromotedIdeaNode[]>>({});
+  const [refinementNodesByRun, setRefinementNodesByRun] = useState<Record<string, RefinementNode[]>>({});
   const canvasContentRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dragStateRef = useRef({
@@ -181,6 +272,7 @@ export default function App() {
 
   const activeRunKey = currentRunId ?? '__draft__';
   const activeIdeaNodes = ideaNodesByRun[activeRunKey] ?? [];
+  const activeRefinementNodes = refinementNodesByRun[activeRunKey] ?? [];
 
   const ideaNodeById = useMemo(() => {
     if (!activeIdeaNodes.length) return {} as Record<string, PromotedIdeaNode>;
@@ -191,10 +283,39 @@ export default function App() {
     return map;
   }, [activeIdeaNodes]);
 
+  const refinementNodeById = useMemo(() => {
+    if (!activeRefinementNodes.length) return {} as Record<string, RefinementNode>;
+    const map: Record<string, RefinementNode> = {};
+    for (const node of activeRefinementNodes) {
+      map[node.id] = node;
+    }
+    return map;
+  }, [activeRefinementNodes]);
+
+  const refinementsByIdea = useMemo(() => {
+    if (!activeRefinementNodes.length) return {} as Record<string, RefinementNode[]>;
+    const grouped: Record<string, RefinementNode[]> = {};
+    for (const node of activeRefinementNodes) {
+      if (!grouped[node.sourceNodeId]) {
+        grouped[node.sourceNodeId] = [];
+      }
+      grouped[node.sourceNodeId].push(node);
+    }
+    return grouped;
+  }, [activeRefinementNodes]);
+
   const createIdeaNodeId = useCallback(
     (index: number) => {
       const runFragment = activeRunKey === '__draft__' ? 'draft' : activeRunKey;
       return `${runFragment}-idea-${index + 1}`;
+    },
+    [activeRunKey],
+  );
+
+  const createRefinementNodeId = useCallback(
+    (ideaNodeId: string, kind: RefinementNodeKind, index: number) => {
+      const runFragment = activeRunKey === '__draft__' ? 'draft' : activeRunKey;
+      return `${runFragment}-${ideaNodeId}-${kind}-${index + 1}`;
     },
     [activeRunKey],
   );
@@ -210,10 +331,37 @@ export default function App() {
     [],
   );
 
+  const clearNodeUiState = useCallback((nodeIds: string[]) => {
+    if (!nodeIds.length) return;
+    setCollapsedNodeContent((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of nodeIds) {
+        if (next[id]) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    setExpandedPreviews((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of nodeIds) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
   const handlePromoteIdea = useCallback(
     (idea: IdeaPreview) => {
       if (typeof idea?.sourceIndex !== 'number') return;
       const nodeId = createIdeaNodeId(idea.sourceIndex);
+      let createdNodeId: string | null = null;
       setIdeaNodesByRun((prev) => {
         const existingNodes = prev[activeRunKey] ?? [];
         const existingIndex = existingNodes.findIndex((node) => node.idea.sourceIndex === idea.sourceIndex);
@@ -226,6 +374,7 @@ export default function App() {
             existingNode.idea.rationale === idea.rationale &&
             existingNode.idea.risk === idea.risk;
           if (ideaUnchanged) {
+            createdNodeId = existingNode.id;
             return prev;
           }
           const nextNodes = [...existingNodes];
@@ -235,6 +384,7 @@ export default function App() {
             label: idea.title,
             idea,
           };
+          createdNodeId = nextNodes[existingIndex].id;
           return {
             ...prev,
             [activeRunKey]: nextNodes,
@@ -251,19 +401,24 @@ export default function App() {
             createdAt: new Date().toISOString(),
           } satisfies PromotedIdeaNode,
         ];
-
+        createdNodeId = nodeId;
         return {
           ...prev,
           [activeRunKey]: nextNodes,
         };
       });
-      handleFocusIdeaNode(nodeId);
+      if (createdNodeId && createdNodeId !== selectedNodeId) {
+        handleFocusIdeaNode(createdNodeId);
+      }
     },
-    [activeRunKey, createIdeaNodeId, handleFocusIdeaNode],
+    [activeRunKey, createIdeaNodeId, handleFocusIdeaNode, selectedNodeId],
   );
 
   const handleRemoveIdeaNode = useCallback(
     (nodeId: string) => {
+      const attachedRefinements = (refinementNodesByRun[activeRunKey] ?? [])
+        .filter((node) => node.sourceNodeId === nodeId)
+        .map((node) => node.id);
       setIdeaNodesByRun((prev) => {
         const existingNodes = prev[activeRunKey] ?? [];
         if (!existingNodes.length) return prev;
@@ -274,6 +429,19 @@ export default function App() {
           [activeRunKey]: nextNodes,
         };
       });
+      if (attachedRefinements.length) {
+        setRefinementNodesByRun((prev) => {
+          const runNodes = prev[activeRunKey] ?? [];
+          if (!runNodes.length) return prev;
+          const nextNodes = runNodes.filter((node) => !attachedRefinements.includes(node.id));
+          if (nextNodes.length === runNodes.length) return prev;
+          return {
+            ...prev,
+            [activeRunKey]: nextNodes,
+          };
+        });
+        clearNodeUiState(attachedRefinements);
+      }
       setCollapsedNodeContent((prev) => {
         if (!prev[nodeId]) return prev;
         const next = { ...prev };
@@ -289,16 +457,19 @@ export default function App() {
       if (selectedNodeId === nodeId) {
         setSelectedNodeId('divergeGenerate');
       }
+      clearNodeUiState([nodeId]);
     },
-    [activeRunKey, selectedNodeId],
+    [activeRunKey, clearNodeUiState, refinementNodesByRun, selectedNodeId],
   );
 
   const syncPromotedIdeas = useCallback(
     (runKey: string, ideas: IdeaPreview[]) => {
       const ideaMap = new Map(ideas.map((idea) => [idea.sourceIndex, idea]));
+      let nextIdeaNodesRef: PromotedIdeaNode[] | undefined;
       setIdeaNodesByRun((prev) => {
         const existingNodes = prev[runKey];
         if (!existingNodes || existingNodes.length === 0) {
+          nextIdeaNodesRef = existingNodes ?? [];
           return prev;
         }
         let changed = false;
@@ -323,15 +494,133 @@ export default function App() {
           }
         }
         if (!changed) {
+          nextIdeaNodesRef = existingNodes;
           return prev;
         }
+        nextIdeaNodesRef = nextNodes;
         return {
           ...prev,
           [runKey]: nextNodes,
         };
       });
+      if (nextIdeaNodesRef) {
+        const allowedIds = new Set(nextIdeaNodesRef.map((node) => node.id));
+        const removedIds: string[] = [];
+        setRefinementNodesByRun((prev) => {
+          const runNodes = prev[runKey] ?? [];
+          if (!runNodes.length) return prev;
+          const filtered = runNodes.filter((node) => {
+            const keep = allowedIds.has(node.sourceNodeId);
+            if (!keep) {
+              removedIds.push(node.id);
+            }
+            return keep;
+          });
+          if (filtered.length === runNodes.length) return prev;
+          return {
+            ...prev,
+            [runKey]: filtered,
+          };
+        });
+        if (removedIds.length) {
+          clearNodeUiState(removedIds);
+        }
+      }
     },
-    [],
+    [clearNodeUiState],
+  );
+
+  const handleAddRefinementNode = useCallback(
+    (ideaNodeId: string, kind: RefinementNodeKind) => {
+      const template = REFINEMENT_TEMPLATES[kind];
+      if (!template) return;
+      if (!ideaNodeById[ideaNodeId]) return;
+
+      let createdNodeId: string | null = null;
+      setRefinementNodesByRun((prev) => {
+        const runNodes = prev[activeRunKey] ?? [];
+        const existingForKind = runNodes.find((node) => node.sourceNodeId === ideaNodeId && node.kind === kind);
+        if (existingForKind) {
+          createdNodeId = existingForKind.id;
+          return prev;
+        }
+        const siblings = runNodes.filter((node) => node.sourceNodeId === ideaNodeId && node.kind === kind);
+        const nodeId = createRefinementNodeId(ideaNodeId, kind, siblings.length);
+        const defaultFields = template.fields.reduce<Record<string, string>>((acc, field) => {
+          acc[field.key] = '';
+          return acc;
+        }, {});
+        const nextNode: RefinementNode = {
+          id: nodeId,
+          label: template.label,
+          kind,
+          sourceNodeId: ideaNodeId,
+          createdAt: new Date().toISOString(),
+          fields: defaultFields,
+        };
+        createdNodeId = nodeId;
+        return {
+          ...prev,
+          [activeRunKey]: [...runNodes, nextNode],
+        };
+      });
+
+      if (createdNodeId) {
+        const nodeKey = createdNodeId;
+        setSelectedNodeId(nodeKey);
+        setExpandedPreviews((prev) => ({
+          ...prev,
+          [nodeKey]: true,
+        }));
+      }
+    },
+    [activeRunKey, createRefinementNodeId, ideaNodeById],
+  );
+
+  const handleUpdateRefinementField = useCallback(
+    (nodeId: string, fieldKey: string, value: string) => {
+      setRefinementNodesByRun((prev) => {
+        const runNodes = prev[activeRunKey] ?? [];
+        const index = runNodes.findIndex((node) => node.id === nodeId);
+        if (index === -1) return prev;
+        const node = runNodes[index];
+        if (node.fields[fieldKey] === value) return prev;
+        const nextNodes = [...runNodes];
+        nextNodes[index] = {
+          ...node,
+          fields: {
+            ...node.fields,
+            [fieldKey]: value,
+          },
+        };
+        return {
+          ...prev,
+          [activeRunKey]: nextNodes,
+        };
+      });
+    },
+    [activeRunKey],
+  );
+
+  const handleRemoveRefinementNode = useCallback(
+    (nodeId: string) => {
+      const parentId = refinementNodeById[nodeId]?.sourceNodeId;
+      setRefinementNodesByRun((prev) => {
+        const runNodes = prev[activeRunKey] ?? [];
+        if (!runNodes.length) return prev;
+        const nextNodes = runNodes.filter((node) => node.id !== nodeId);
+        if (nextNodes.length === runNodes.length) return prev;
+        return {
+          ...prev,
+          [activeRunKey]: nextNodes,
+        };
+      });
+      clearNodeUiState([nodeId]);
+      if (selectedNodeId === nodeId) {
+        setSelectedNodeId(parentId ?? 'divergeGenerate');
+      }
+    },
+    [activeRunKey, clearNodeUiState, refinementNodeById, selectedNodeId],
   );
 
   const ideaNodeDetails = useMemo(() => {
@@ -348,10 +637,26 @@ export default function App() {
     return map;
   }, [activeIdeaNodes]);
 
+  const refinementNodeDetails = useMemo(() => {
+    if (!activeRefinementNodes.length) return {} as Record<string, NodeData>;
+    const map: Record<string, NodeData> = {};
+    for (const node of activeRefinementNodes) {
+      map[node.id] = {
+        status: 'completed',
+        output: node.fields,
+        startedAt: node.createdAt,
+        finishedAt: node.createdAt,
+      };
+    }
+    return map;
+  }, [activeRefinementNodes]);
+
   const combinedNodeDetails = useMemo(() => {
-    if (!Object.keys(ideaNodeDetails).length) return nodeDetails;
-    return { ...nodeDetails, ...ideaNodeDetails };
-  }, [ideaNodeDetails, nodeDetails]);
+    if (!Object.keys(ideaNodeDetails).length && !Object.keys(refinementNodeDetails).length) {
+      return nodeDetails;
+    }
+    return { ...nodeDetails, ...ideaNodeDetails, ...refinementNodeDetails };
+  }, [ideaNodeDetails, nodeDetails, refinementNodeDetails]);
 
   const selectedNode = useMemo(() => {
     if (!selectedNodeId) return null;
@@ -369,7 +674,20 @@ export default function App() {
     [activeIdeaNodes],
   );
 
-  const graphNodes = useMemo(() => [...baseGraphNodes, ...ideaGraphNodes], [baseGraphNodes, ideaGraphNodes]);
+  const refinementGraphNodes = useMemo(
+    () =>
+      activeRefinementNodes.map((node) => ({
+        id: node.id,
+        label: node.label,
+        type: 'refinement' as const,
+      })),
+    [activeRefinementNodes],
+  );
+
+  const graphNodes = useMemo(
+    () => [...baseGraphNodes, ...ideaGraphNodes, ...refinementGraphNodes],
+    [baseGraphNodes, ideaGraphNodes, refinementGraphNodes],
+  );
 
   const graphNodeById = useMemo(() => {
     const map: Record<string, Graph['nodes'][number]> = {};
@@ -389,7 +707,19 @@ export default function App() {
     [activeIdeaNodes],
   );
 
-  const graphEdges = useMemo(() => [...baseGraphEdges, ...ideaGraphEdges], [baseGraphEdges, ideaGraphEdges]);
+  const refinementGraphEdges = useMemo(
+    () =>
+      activeRefinementNodes.map((node) => ({
+        source: node.sourceNodeId,
+        target: node.id,
+      })),
+    [activeRefinementNodes],
+  );
+
+  const graphEdges = useMemo(
+    () => [...baseGraphEdges, ...ideaGraphEdges, ...refinementGraphEdges],
+    [baseGraphEdges, ideaGraphEdges, refinementGraphEdges],
+  );
 
   useEffect(() => {
     if (!graphNodes.length) return;
@@ -400,6 +730,12 @@ export default function App() {
       activeIdeaNodes.forEach((ideaNode, index) => {
         ideaIndexById[ideaNode.id] = index;
       });
+      const refinementIndexById: Record<string, number> = {};
+      for (const refinementList of Object.values(refinementsByIdea) as RefinementNode[][]) {
+        refinementList.forEach((refinementNode, index) => {
+          refinementIndexById[refinementNode.id] = index;
+        });
+      }
 
       for (const node of graphNodes) {
         if (!next[node.id]) {
@@ -410,6 +746,17 @@ export default function App() {
             next[node.id] = {
               x: divergePosition.x + 320,
               y: divergePosition.y + ideaIndex * verticalSpacing,
+            };
+          } else if (node.type === 'refinement') {
+            const refinementMeta = refinementNodeById[node.id];
+            const parentPosition = refinementMeta
+              ? next[refinementMeta.sourceNodeId] ?? prev[refinementMeta.sourceNodeId] ?? { x: 0, y: 0 }
+              : { x: 0, y: 0 };
+            const refinementIndex = refinementIndexById[node.id] ?? 0;
+            const verticalSpacing = 150;
+            next[node.id] = {
+              x: parentPosition.x + 320,
+              y: parentPosition.y + refinementIndex * verticalSpacing,
             };
           } else {
             next[node.id] = { x: 0, y: 0 };
@@ -427,7 +774,7 @@ export default function App() {
 
       return changed ? next : prev;
     });
-  }, [activeIdeaNodes, graphNodes]);
+  }, [activeIdeaNodes, activeRefinementNodes, graphNodes, refinementNodeById, refinementsByIdea]);
 
   const measureEdges = useCallback(() => {
     const canvasEl = canvasContentRef.current;
@@ -525,10 +872,10 @@ export default function App() {
   }, [measureEdges, graphNodes, nodePositions, zoom]);
 
   useEffect(() => {
-    measureEdges();
-    window.addEventListener('resize', measureEdges);
+    const handleResize = () => measureEdges();
+    window.addEventListener('resize', handleResize);
     return () => {
-      window.removeEventListener('resize', measureEdges);
+      window.removeEventListener('resize', handleResize);
     };
   }, [measureEdges]);
 
@@ -681,6 +1028,10 @@ export default function App() {
       ...prev,
       [runKey]: [],
     }));
+    setRefinementNodesByRun((prev) => ({
+      ...prev,
+      [runKey]: [],
+    }));
   };
 
   const handleStartRun = async () => {
@@ -731,6 +1082,13 @@ export default function App() {
     setRunStatus(run.status);
     setSelectedNodeId('seed');
     setIdeaNodesByRun((prev) => {
+      if (run.id in prev) return prev;
+      return {
+        ...prev,
+        [run.id]: [],
+      };
+    });
+    setRefinementNodesByRun((prev) => {
       if (run.id in prev) return prev;
       return {
         ...prev,
@@ -854,6 +1212,13 @@ export default function App() {
 
       const runKey = detail.state.id ?? '__draft__';
       setIdeaNodesByRun((prev) => {
+        if (runKey in prev) return prev;
+        return {
+          ...prev,
+          [runKey]: [],
+        };
+      });
+      setRefinementNodesByRun((prev) => {
         if (runKey in prev) return prev;
         return {
           ...prev,
@@ -1041,6 +1406,8 @@ export default function App() {
         const rationale = idea.rationale ?? null;
         const risk = idea.risk ?? null;
         const summaryLabel = `Idea #${idea.sourceIndex + 1}`;
+        const ideaRefinements = refinementsByIdea[nodeId] ?? [];
+        const refinementKindsPresent = new Set(ideaRefinements.map((refinement) => refinement.kind));
 
         return (
           <div className="node-preview idea-node-preview">
@@ -1074,6 +1441,93 @@ export default function App() {
                 onClick={() => handleFocusIdeaNode('divergeGenerate')}
               >
                 View in Diverge node
+              </button>
+            </div>
+            <div className="idea-card-actions tertiary">
+              {REFINEMENT_ORDER.map((kind) => {
+                const template = REFINEMENT_TEMPLATES[kind];
+                const existing = ideaRefinements.find((refinement) => refinement.kind === kind);
+                const hasKind = refinementKindsPresent.has(kind);
+                const label = hasKind ? `View ${template.label}` : `Add ${template.label}`;
+                const handleAction = hasKind
+                  ? () => existing && handleFocusIdeaNode(existing.id)
+                  : () => handleAddRefinementNode(nodeId, kind);
+                return (
+                  <button
+                    key={`${nodeId}-${kind}`}
+                    type="button"
+                    className={`idea-card-action ${hasKind ? '' : 'outline'}`.trim()}
+                    onClick={handleAction}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {ideaRefinements.length > 0 && (
+              <ul className="refinement-summary-list">
+                {ideaRefinements.map((refinement) => (
+                  <li key={refinement.id}>
+                    <button
+                      type="button"
+                      className="refinement-summary-button"
+                      onClick={() => handleFocusIdeaNode(refinement.id)}
+                    >
+                      {refinement.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      }
+
+      if (graphNode?.type === 'refinement') {
+        const refinement = refinementNodeById[nodeId];
+        if (!refinement) {
+          return (
+            <div className="node-preview muted">
+              <p className="node-card-info muted">Refinement details unavailable.</p>
+            </div>
+          );
+        }
+        const template = REFINEMENT_TEMPLATES[refinement.kind];
+        const parentIdea = ideaNodeById[refinement.sourceNodeId];
+        return (
+          <div className="node-preview refinement-node-preview">
+            <div className="node-preview-header">
+              <span className="node-preview-title">{template.label}</span>
+              <span className="node-preview-meta">{parentIdea?.label ?? 'Idea node'}</span>
+            </div>
+            <p className="node-card-info refinement-description">{template.description}</p>
+            <form className="refinement-form" onSubmit={(event) => event.preventDefault()}>
+              {template.fields.map((field) => (
+                <label key={field.key}>
+                  <span>{field.label}</span>
+                  <textarea
+                    value={refinement.fields[field.key] ?? ''}
+                    onChange={(event) => handleUpdateRefinementField(nodeId, field.key, event.target.value)}
+                    placeholder={field.placeholder}
+                    rows={field.rows ?? 3}
+                  />
+                </label>
+              ))}
+            </form>
+            <div className="idea-card-actions">
+              <button
+                type="button"
+                className="idea-card-action secondary"
+                onClick={() => handleRemoveRefinementNode(nodeId)}
+              >
+                Remove refinement
+              </button>
+              <button
+                type="button"
+                className="idea-card-action"
+                onClick={() => handleFocusIdeaNode(refinement.sourceNodeId)}
+              >
+                View parent idea
               </button>
             </div>
           </div>
@@ -1143,6 +1597,8 @@ export default function App() {
                 const promoteIdea = () => handlePromoteIdea(idea);
                 const focusIdea = () => handleFocusIdeaNode(promotedNodeId);
                 const removeIdea = () => handleRemoveIdeaNode(promotedNodeId);
+                const ideaRefinements = refinementsByIdea[promotedNodeId] ?? [];
+                const refinementKindsPresent = new Set(ideaRefinements.map((refinement) => refinement.kind));
                 return (
                   <article
                     key={promotedNodeId}
@@ -1196,6 +1652,29 @@ export default function App() {
                         </>
                       )}
                     </div>
+                    {isPromoted && (
+                      <div className="idea-card-actions tertiary">
+                        {REFINEMENT_ORDER.map((kind) => {
+                          const template = REFINEMENT_TEMPLATES[kind];
+                          const existing = ideaRefinements.find((refinement) => refinement.kind === kind);
+                          const hasKind = refinementKindsPresent.has(kind);
+                          const label = hasKind ? `View ${template.label}` : `Add ${template.label}`;
+                          const handleAction = hasKind
+                            ? () => existing && handleFocusIdeaNode(existing.id)
+                            : () => handleAddRefinementNode(promotedNodeId, kind);
+                          return (
+                            <button
+                              key={`${promotedNodeId}-${kind}`}
+                              type="button"
+                              className={`idea-card-action ${hasKind ? '' : 'outline'}`.trim()}
+                              onClick={handleAction}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </article>
                 );
               })}
@@ -1271,10 +1750,15 @@ export default function App() {
       extractIdeas,
       formatBriefHeading,
       graphNodeById,
+      handleAddRefinementNode,
       handleFocusIdeaNode,
       handlePromoteIdea,
       handleRemoveIdeaNode,
+      handleRemoveRefinementNode,
+      handleUpdateRefinementField,
       ideaNodeById,
+      refinementNodeById,
+      refinementsByIdea,
       tidyText,
       toggleNodeContent,
       togglePreviewExpansion,

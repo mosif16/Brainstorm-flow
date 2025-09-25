@@ -1,7 +1,7 @@
 export interface GraphNode {
   id: string;
   label: string;
-  type: 'seed' | 'diverge' | 'idea';
+  type: 'seed' | 'diverge' | 'idea' | 'refinement';
 }
 
 export interface GraphEdge {
