@@ -54,23 +54,20 @@ fi
 send_signal() {
   local signal="$1"
   local target="$2"
+  local normalized_signal="${signal#-}"
 
-if [[ "$signal" != -* ]]; then
-  signal="-$signal"
-fi
-
-local status=0
-if [[ "$target" == -* ]]; then
-  if ! kill "$signal" -- "$target" 2>/dev/null; then
-    status=$?
+  local status=0
+  if [[ "$target" == -* ]]; then
+    if ! kill -"$normalized_signal" -- "$target" 2>/dev/null; then
+      status=$?
+    fi
+  else
+    if ! kill -"$normalized_signal" "$target" 2>/dev/null; then
+      status=$?
+    fi
   fi
-else
-  if ! kill "$signal" "$target" 2>/dev/null; then
-    status=$?
-  fi
-fi
 
-return "$status"
+  return $status
 }
 
 stop_service() {
