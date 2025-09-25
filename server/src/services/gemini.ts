@@ -1,67 +1,57 @@
+import {
+  FunctionDeclarationSchemaType,
+  type FunctionDeclarationSchema,
+  type GenerationConfig,
+  type ResponseSchema,
+} from '@google/generative-ai';
 import { SeedInput, Idea, GeminiUsage } from '../pipeline/types';
 import type { AppConfig } from '../utils/env';
+import { getGenAiClient } from './genAiClient';
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'models/gemini-2.5-flash-lite';
-const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
-
-type GeminiCandidate = {
-  content?: {
-    parts?: Array<{ text?: string }>;
-  };
+const ideaItemSchema: FunctionDeclarationSchema = {
+  type: FunctionDeclarationSchemaType.OBJECT,
+  properties: {
+    title: {
+      type: FunctionDeclarationSchemaType.STRING,
+      properties: {},
+    },
+    description: {
+      type: FunctionDeclarationSchemaType.STRING,
+      properties: {},
+    },
+    rationale: {
+      type: FunctionDeclarationSchemaType.STRING,
+      properties: {},
+    },
+    risk: {
+      type: FunctionDeclarationSchemaType.STRING,
+      properties: {},
+      nullable: true,
+    },
+  },
+  required: ['title', 'description', 'rationale'],
 };
 
-type GeminiGenerateResponse = {
-  candidates?: GeminiCandidate[];
-  usageMetadata?: {
-    promptTokenCount?: number;
-    candidatesTokenCount?: number;
-    totalTokenCount?: number;
-  };
+const ideasArraySchema = {
+  type: FunctionDeclarationSchemaType.ARRAY,
+  properties: {},
+  items: ideaItemSchema,
+} as unknown as FunctionDeclarationSchema;
+
+const ideasResponseSchema: ResponseSchema = {
+  type: FunctionDeclarationSchemaType.OBJECT,
+  required: ['ideas'],
+  properties: {
+    ideas: ideasArraySchema,
+  },
 };
-
-type GeminiError = {
-  error: {
-    message: string;
-  };
-};
-
-async function callGemini(config: AppConfig, prompt: string): Promise<GeminiGenerateResponse> {
-  const url = `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${config.geminiApiKey}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { text: prompt },
-          ],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-      },
-    }),
-  });
-
-  if (!response.ok) {
-    const errorBody = (await response.json().catch(() => null)) as GeminiError | null;
-    const message = errorBody?.error?.message || `Gemini API error: ${response.statusText}`;
-    throw new Error(message);
-  }
-
-  const data = (await response.json()) as GeminiGenerateResponse;
-  return data;
-}
 
 function buildPrompt(seed: SeedInput, n: number, attempt: number): string {
-  const attemptNote = attempt > 1 ? '\nSTRICTLY return valid JSON ONLY. No prose.' : '';
+  const attemptNote = attempt > 1 ? '\nReturn valid JSON only with the specified schema.' : '';
   return [
     'You are an expert creative strategist helping brainstorm product and campaign concepts.',
-    `Generate ${n} diverse ideas based on the seed data.`,
-    'Return a JSON object with this exact shape:',
-    '{"ideas": [{"title": string, "description": string, "rationale": string, "risk": string}] }',
+    `Generate ${n} diverse, high-quality ideas responding to the seed data.`,
+    'Follow the structured response schema provided.',
     'Rules:',
     '- titles under 10 words',
     '- description 2-3 sentences',
@@ -72,14 +62,6 @@ function buildPrompt(seed: SeedInput, n: number, attempt: number): string {
     `Constraints: ${seed.constraints}`,
     attemptNote,
   ].join('\n');
-}
-
-function extractIdeasText(response: GeminiGenerateResponse): string {
-  const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    throw new Error('Gemini response missing text content.');
-  }
-  return text;
 }
 
 function parseIdeas(raw: string): Idea[] {
@@ -129,13 +111,37 @@ export async function generateIdeas(
   seed: SeedInput,
   n: number,
 ): Promise<{ ideas: Idea[]; usage: GeminiUsage; raw: string }> {
-  const attempts = [1, 2];
+  const client = getGenAiClient(config);
+  const model = client.getGenerativeModel({ model: config.geminiModel });
+  const attempts = [
+    { useSchema: true },
+    { useSchema: false },
+  ] as const;
   let lastError: Error | null = null;
-  for (const attempt of attempts) {
+  for (const [idx, attempt] of attempts.entries()) {
+    const { useSchema } = attempt;
+    const attemptNumber = idx + 1;
     try {
-      const prompt = buildPrompt(seed, n, attempt);
-      const response = await callGemini(config, prompt);
-      const raw = extractIdeasText(response);
+      const prompt = buildPrompt(seed, n, attemptNumber);
+      const generationConfig: GenerationConfig = {
+        responseMimeType: 'application/json',
+        ...(useSchema ? { responseSchema: ideasResponseSchema } : {}),
+      };
+      const result = await model.generateContent({
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig,
+      });
+
+      const response = result.response;
+      const raw = response.text();
+      if (!raw || raw.trim().length === 0) {
+        throw new Error('Gemini response missing text content.');
+      }
       const ideas = parseIdeas(raw);
       const usage: GeminiUsage = {};
       if (response.usageMetadata?.promptTokenCount !== undefined) {

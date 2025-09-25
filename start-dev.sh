@@ -38,51 +38,93 @@ parse_pid_file() {
   done <"$file"
 }
 
-read_env_value() {
-  local file_path="$1"
-  local key="$2"
+if [[ -n "${PORT:-}" && "$PORT" != "$DEFAULT_BACKEND_PORT" ]]; then
+  echo "Ignoring PORT override; backend uses fixed port $DEFAULT_BACKEND_PORT."
+fi
+BACKEND_PORT="$DEFAULT_BACKEND_PORT"
 
-  if [[ -f "$file_path" ]]; then
-    local line
-    line=$(grep -E "^${key}=" "$file_path" | tail -n 1 || true)
-    if [[ -n "$line" ]]; then
-      echo "${line#*=}"
-      return
-    fi
-  fi
-}
-
-BACKEND_ENV_FILE="$SERVER_DIR/.env"
-if [[ ! -f "$BACKEND_ENV_FILE" && -f "$SERVER_DIR/.env.example" ]]; then
-  BACKEND_ENV_FILE="$SERVER_DIR/.env.example"
+if [[ -n "${VITE_PORT:-}" && "$VITE_PORT" != "$DEFAULT_FRONTEND_PORT" ]]; then
+  echo "Ignoring VITE_PORT override; frontend uses fixed port $DEFAULT_FRONTEND_PORT."
 fi
-
-BACKEND_PORT="${PORT:-}"
-if [[ -z "$BACKEND_PORT" ]]; then
-  BACKEND_PORT="$(read_env_value "$BACKEND_ENV_FILE" "PORT")"
-fi
-if [[ -z "$BACKEND_PORT" ]]; then
-  BACKEND_PORT="$DEFAULT_BACKEND_PORT"
-fi
-
-FRONTEND_ENV_FILE="$CLIENT_DIR/.env"
-if [[ ! -f "$FRONTEND_ENV_FILE" && -f "$CLIENT_DIR/.env.example" ]]; then
-  FRONTEND_ENV_FILE="$CLIENT_DIR/.env.example"
-fi
-
-FRONTEND_PORT="${VITE_PORT:-}"
-if [[ -z "$FRONTEND_PORT" ]]; then
-  FRONTEND_PORT="$(read_env_value "$FRONTEND_ENV_FILE" "VITE_PORT")"
-fi
-if [[ -z "$FRONTEND_PORT" ]]; then
-  FRONTEND_PORT="$DEFAULT_FRONTEND_PORT"
-fi
+FRONTEND_PORT="$DEFAULT_FRONTEND_PORT"
 
 RECORDED_BACKEND_PID=""
 RECORDED_FRONTEND_PID=""
 
 if [[ -f "$PID_FILE" ]]; then
   parse_pid_file "$PID_FILE"
+fi
+
+is_project_process() {
+  local pid="$1"
+  [[ -z "$pid" ]] && return 1
+
+  local command
+  command=$(ps -o command= -p "$pid" 2>/dev/null | tr -d '\r' || true)
+  [[ -z "$command" ]] && return 1
+
+  if [[ "$command" == *"$SERVER_DIR"* || "$command" == *"$CLIENT_DIR"* ]]; then
+    return 0
+  fi
+
+  case "$command" in
+    *node*tsx*server/src*|*vite*|*npm*run*dev*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+NEED_AUTO_CLEANUP=0
+declare -a FOREIGN_CONFLICTS=()
+
+check_port_conflicts() {
+  local port="$1"
+  local label="$2"
+  local recorded_pid="$3"
+  local output
+
+  if output=$(lsof -ti tcp:"$port" 2>/dev/null); then
+    while IFS= read -r pid; do
+      [[ -z "$pid" ]] && continue
+      if [[ -n "$recorded_pid" && "$pid" == "$recorded_pid" ]]; then
+        NEED_AUTO_CLEANUP=1
+        continue
+      fi
+      if is_project_process "$pid"; then
+        NEED_AUTO_CLEANUP=1
+        continue
+      fi
+      FOREIGN_CONFLICTS+=("$label:$port:$pid")
+    done <<<"$output"
+  fi
+}
+
+check_port_conflicts "$BACKEND_PORT" "backend" "$RECORDED_BACKEND_PID"
+check_port_conflicts "$FRONTEND_PORT" "frontend" "$RECORDED_FRONTEND_PID"
+
+if (( ${#FOREIGN_CONFLICTS[@]} > 0 )); then
+  echo "Found non-project processes on required ports:"
+  for conflict in "${FOREIGN_CONFLICTS[@]}"; do
+    IFS=':' read -r label port pid <<<"$conflict"
+    echo "  - $label port $port in use by PID $pid. Stop it manually, then re-run ./start-dev.sh."
+  done
+  exit 1
+fi
+
+describe_port_processes() {
+  local port="$1"
+  if lsof -nP -i tcp:"$port" -sTCP:LISTEN 2>/dev/null; then
+    return
+  fi
+}
+
+if (( NEED_AUTO_CLEANUP )); then
+  echo "Detected lingering dev servers; running stop-dev.sh to clean them up..."
+  STOP_DEV_SILENT=1 "$ROOT_DIR/stop-dev.sh"
+  RECORDED_BACKEND_PID=""
+  RECORDED_FRONTEND_PID=""
 fi
 
 check_port() {
@@ -125,7 +167,8 @@ ensure_port_free() {
   if pids=$(lsof -ti tcp:"$port" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//'); then
     if [[ -n "$pids" ]]; then
       echo "Port $port is currently in use by PID(s): $pids for $label."
-      echo "Run ./stop-dev.sh or choose a different port before starting the dev server."
+      describe_port_processes "$port"
+      echo "Run ./stop-dev.sh or terminate the listed process(es) before starting the dev server."
       exit 1
     fi
   fi
@@ -147,11 +190,11 @@ start_service() {
   shift 3
   local -a env_args=("$@")
 
-  echo "Starting $label (logs: $log_file)..."
+  >&2 echo "Starting $label (logs: $log_file)..."
   nohup env RUNS_DIR="$RUNS_DIR" "${env_args[@]}" npm --prefix "$path" run dev >"$log_file" 2>&1 &
   local pid=$!
   disown "$pid"
-  echo "$label started with PID $pid."
+  >&2 echo "$label started with PID $pid."
   echo "$pid"
 }
 

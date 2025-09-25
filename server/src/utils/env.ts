@@ -9,6 +9,7 @@ type RequiredKey = typeof requiredEnv[number];
 
 export interface AppConfig {
   geminiApiKey: string;
+  geminiModel: string;
   port: number;
   defaultN: number;
   defaultK: number;
@@ -35,10 +36,12 @@ function getNumberEnv(key: string, fallback: number): number {
 
 export function loadConfig(): AppConfig {
   const geminiApiKey = getRequiredEnv('GEMINI_API_KEY');
-  const port = getNumberEnv('PORT', 4000);
+  const geminiModel = process.env.GEMINI_MODEL || 'models/gemini-2.5-flash-lite';
+  // Backend port is fixed to 4000 so the client and scripts can rely on it.
+  const port = 4000;
   const defaultN = getNumberEnv('DEFAULT_N', 6);
   const defaultK = getNumberEnv('DEFAULT_K', 3);
   const runsDir = process.env.RUNS_DIR || path.resolve(process.cwd(), '../runs');
 
-  return { geminiApiKey, port, defaultN, defaultK, runsDir };
+  return { geminiApiKey, geminiModel, port, defaultN, defaultK, runsDir };
 }

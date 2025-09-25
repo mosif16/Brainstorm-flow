@@ -4,13 +4,13 @@ Full-stack brainstorming assistant that runs a three-node pipeline (Seed → Div
 
 ## Features
 - **Node.js + TypeScript backend** with Express, streaming status updates (SSE), and disk persistence under `runs/<timestamp>/`.
-- **Gemini integration** (server-side only) with JSON validation and automatic retry on malformed responses.
+- **Google GenAI SDK integration** (server-side only) with structured output enforcement and automatic retry on malformed responses.
 - **React 18 frontend** with a minimal Comfy-style node canvas, live inspector, pipeline controls, and Markdown brief viewer/downloader.
 - **Run artifacts**: graph structure, per-node IO snapshots, final brief, and token usage logs stored per run.
 
 ## Prerequisites
-- Node.js 18+ (required for native `fetch`).
-- A valid `GEMINI_API_KEY` with access to the Gemini `models/gemini-2.5-flash-lite` model (or override via `GEMINI_MODEL`).
+- Node.js 18+.
+- A valid `GEMINI_API_KEY` with access to the configured Gemini model (`GEMINI_MODEL`, default `models/gemini-2.5-flash-lite`).
 
 ## Setup
 ```bash
@@ -33,13 +33,12 @@ cp client/.env.example client/.env
 Then edit:
 - `server/.env` for backend keys:
   - `GEMINI_API_KEY=your_key_here`
-  - `PORT=4000` (optional override)
   - `DEFAULT_N=6`, `DEFAULT_K=3` (pipeline defaults)
   - `RUNS_DIR=../runs` (artifact location)
   - `GEMINI_MODEL=models/gemini-2.5-flash-lite` (optional model override)
 - `client/.env` for frontend config:
   - `VITE_API_BASE=http://localhost:4000`
-  - optionally `VITE_PORT=5173`
+  - Frontend port is fixed to `5173`.
 
 ## Development Workflow
 ```bash
@@ -51,7 +50,7 @@ npm run dev
 cd client
 npm run dev
 ```
-Front-end dev server (default `http://localhost:5173`) proxies requests to the configured backend address.
+Front-end dev server runs at `http://localhost:5173` and proxies requests to the configured backend address. The helper scripts automatically stop lingering dev servers on the fixed ports (4000 and 5173) before launching new ones and surface the owning process if manual cleanup is required.
 
 ## API Overview
 - `GET /health` – simple readiness check.

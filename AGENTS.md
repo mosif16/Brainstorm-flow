@@ -1,15 +1,16 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `server/`: Node.js + TypeScript API (Express) implementing the Seed → DivergeGenerate → PackageOutput pipeline. Key folders: `src/pipeline/` (orchestration), `src/routes/` (HTTP & SSE), `src/services/` (Gemini client), `src/utils/` (config).
+- `server/`: Node.js + TypeScript API (Express) implementing the Seed → DivergeGenerate → PackageOutput pipeline. Key folders: `src/pipeline/` (orchestration), `src/routes/` (HTTP & SSE), `src/services/` (Google GenAI client), `src/utils/` (config).
 - `client/`: React 18 SPA (Vite) rendering the three-node canvas, inspector, and brief UI. Styling lives in `src/App.css`; API helpers in `src/api.ts`.
 - `runs/`: Timestamped run artifacts (`graph.json`, `state.json`, `node_io/*.json`, `brief.md`, `token_usage.json`). Keep this directory gitignored.
 
 ## Build, Test, and Development Commands
-- Backend dev: `cd server && npm install && npm run dev` — starts Express with tsx watch on port `PORT` (default 4000).
+- Backend dev: `cd server && npm install && npm run dev` — starts Express with tsx watch on port 4000.
 - Backend build: `npm run build` then `npm start` — compiles TypeScript to `dist/` and runs the compiled server.
-- Frontend dev: `cd client && npm install && npm run dev` — launches Vite dev server (default http://localhost:5173) pointing to `VITE_API_BASE`.
+- Frontend dev: `cd client && npm install && npm run dev` — launches Vite dev server at http://localhost:5173 pointing to `VITE_API_BASE`.
 - Frontend build: `npm run build` — produces static assets in `client/dist/`; preview with `npm run preview`.
+- `./start-dev.sh` auto-cleans lingering dev servers on the reserved ports before launching fresh instances and reports any non-project processes holding them; `./stop-dev.sh` forcefully clears them when you need a manual reset.
 
 ## Coding Style & Naming Conventions
 - TypeScript/JavaScript: 2-space indentation, trailing commas where valid. Prefer named functions for reusable utilities, arrow functions in React components.

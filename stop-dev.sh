@@ -8,52 +8,15 @@ PID_FILE="$ROOT_DIR/.devservers.pids"
 DEFAULT_BACKEND_PORT=4000
 DEFAULT_FRONTEND_PORT=5173
 
-read_env_value() {
-  local file_path="$1"
-  local key="$2"
-
-  if [[ -f "$file_path" ]]; then
-    local line
-    line=$(grep -E "^${key}=" "$file_path" | tail -n 1 || true)
-    if [[ -n "$line" ]]; then
-      echo "${line#*=}"
-      return
-    fi
-  fi
-}
-
+if [[ -n "${PORT:-}" && "$PORT" != "$DEFAULT_BACKEND_PORT" ]]; then
+  echo "Ignoring PORT override; backend shutdown targets fixed port $DEFAULT_BACKEND_PORT."
+fi
 BACKEND_PORT="$DEFAULT_BACKEND_PORT"
+
+if [[ -n "${VITE_PORT:-}" && "$VITE_PORT" != "$DEFAULT_FRONTEND_PORT" ]]; then
+  echo "Ignoring VITE_PORT override; frontend shutdown targets fixed port $DEFAULT_FRONTEND_PORT."
+fi
 FRONTEND_PORT="$DEFAULT_FRONTEND_PORT"
-
-BACKEND_ENV_FILE="$SERVER_DIR/.env"
-if [[ ! -f "$BACKEND_ENV_FILE" && -f "$SERVER_DIR/.env.example" ]]; then
-  BACKEND_ENV_FILE="$SERVER_DIR/.env.example"
-fi
-
-env_backend_port="${PORT:-}"
-if [[ -n "$env_backend_port" ]]; then
-  BACKEND_PORT="$env_backend_port"
-else
-  env_file_backend_port="$(read_env_value "$BACKEND_ENV_FILE" "PORT")"
-  if [[ -n "$env_file_backend_port" ]]; then
-    BACKEND_PORT="$env_file_backend_port"
-  fi
-fi
-
-FRONTEND_ENV_FILE="$CLIENT_DIR/.env"
-if [[ ! -f "$FRONTEND_ENV_FILE" && -f "$CLIENT_DIR/.env.example" ]]; then
-  FRONTEND_ENV_FILE="$CLIENT_DIR/.env.example"
-fi
-
-env_frontend_port="${VITE_PORT:-}"
-if [[ -n "$env_frontend_port" ]]; then
-  FRONTEND_PORT="$env_frontend_port"
-else
-  env_file_frontend_port="$(read_env_value "$FRONTEND_ENV_FILE" "VITE_PORT")"
-  if [[ -n "$env_file_frontend_port" ]]; then
-    FRONTEND_PORT="$env_file_frontend_port"
-  fi
-fi
 
 BACKEND=""
 FRONTEND=""
@@ -88,6 +51,28 @@ if [[ -f "$PID_FILE" ]]; then
   parse_pid_file "$PID_FILE"
 fi
 
+send_signal() {
+  local signal="$1"
+  local target="$2"
+
+if [[ "$signal" != -* ]]; then
+  signal="-$signal"
+fi
+
+local status=0
+if [[ "$target" == -* ]]; then
+  if ! kill "$signal" -- "$target" 2>/dev/null; then
+    status=$?
+  fi
+else
+  if ! kill "$signal" "$target" 2>/dev/null; then
+    status=$?
+  fi
+fi
+
+return "$status"
+}
+
 stop_service() {
   local label="$1"
   local pid="$2"
@@ -110,10 +95,12 @@ stop_service() {
   fi
 
   echo "Stopping $label (PID $pid)..."
-  kill "$signal_target" 2>/dev/null || true
+  if ! send_signal TERM "$signal_target"; then
+    echo "Warning: unable to signal PID $pid with TERM (permission denied?)."
+  fi
 
   for _ in {1..10}; do
-    if ! kill -0 "$pid" 2>/dev/null && ! kill -0 "$signal_target" 2>/dev/null; then
+    if ! kill -0 "$pid" 2>/dev/null; then
       echo "$label stopped."
       return
     fi
@@ -121,13 +108,17 @@ stop_service() {
   done
 
   echo "$label did not exit gracefully; sending SIGKILL."
-  kill -9 "$signal_target" 2>/dev/null || true
+  if ! send_signal KILL "$signal_target"; then
+    echo "Warning: unable to force kill PID $pid (permission denied?)."
+  fi
 }
 
 stop_service "backend" "${BACKEND:-}"
 stop_service "frontend" "${FRONTEND:-}"
 
 rm -f "$PID_FILE"
+
+UNABLE_TO_KILL=()
 
 kill_port_processes() {
   local port="$1"
@@ -142,22 +133,46 @@ kill_port_processes() {
     echo "Terminating $count process(es) still bound to port $port for $label: $pids"
     printf '%s' "$output" | while IFS= read -r pid; do
       [[ -z "$pid" ]] && continue
-      if kill -0 "$pid" 2>/dev/null; then
-        local pgid
-        pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
-        local target="$pid"
-        if [[ -n "$pgid" && "$pgid" =~ ^[0-9]+$ ]]; then
-          target="-${pgid}"
+      local pgid
+      pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+      local target="$pid"
+      if [[ -n "$pgid" && "$pgid" =~ ^[0-9]+$ ]]; then
+        target="-${pgid}"
+      fi
+
+      if ! send_signal TERM "$target"; then
+        UNABLE_TO_KILL+=("$pid:$label:TERM_DENIED")
+        continue
+      fi
+
+      for _ in {1..5}; do
+        if ! lsof -p "$pid" >/dev/null 2>&1; then
+          break
         fi
-        kill "$target" 2>/dev/null || true
         sleep 0.2
-        if kill -0 "$pid" 2>/dev/null || ( [[ "$target" == -* ]] && kill -0 "$target" 2>/dev/null ); then
-          kill -9 "$target" 2>/dev/null || true
+      done
+
+      if lsof -p "$pid" >/dev/null 2>&1; then
+        if ! send_signal KILL "$target"; then
+          UNABLE_TO_KILL+=("$pid:$label:KILL_DENIED")
+          continue
         fi
+        sleep 0.2
+      fi
+
+      if lsof -p "$pid" >/dev/null 2>&1; then
+        UNABLE_TO_KILL+=("$pid:$label:STILL_RUNNING")
       fi
     done
   else
     echo "No remaining processes detected on port $port for $label."
+  fi
+}
+
+describe_port_processes() {
+  local port="$1"
+  if lsof -nP -i tcp:"$port" -sTCP:LISTEN 2>/dev/null; then
+    return
   fi
 }
 
@@ -181,10 +196,21 @@ wait_for_port_release() {
     local pids
     pids=$(printf '%s' "$output" | tr '\n' ' ' | sed 's/ *$//')
     echo "Warning: port $port still in use by PID(s) $pids for $label after stop attempts."
+    describe_port_processes "$port"
   fi
 }
 
 wait_for_port_release "$BACKEND_PORT" "backend"
 wait_for_port_release "$FRONTEND_PORT" "frontend"
 
-echo "Frontend and backend dev servers stopped."
+if (( ${#UNABLE_TO_KILL[@]} > 0 )); then
+  echo "Some processes could not be terminated automatically:"
+  for entry in "${UNABLE_TO_KILL[@]}"; do
+    IFS=':' read -r pid label action <<<"$entry"
+    echo "  - PID $pid on $label port (action $action). Stop it manually if it persists."
+  done
+fi
+
+if [[ -z "${STOP_DEV_SILENT:-}" ]]; then
+  echo "Frontend and backend dev servers stopped."
+fi
