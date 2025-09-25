@@ -17,6 +17,9 @@ import type {
   PipelineRunState,
   RunDetailResponse,
   RunEvent,
+  SeedNodeOutput,
+  DivergeNodeOutput,
+  PackageNodeOutput,
 } from './types';
 import './App.css';
 
@@ -40,6 +43,8 @@ type NodeData = {
 type IdeaPreview = {
   title: string;
   description?: string;
+  rationale?: string;
+  risk?: string;
 };
 
 const initialForm: SeedFormState = {
@@ -114,6 +119,7 @@ export default function App() {
   const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>({});
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [expandedPreviews, setExpandedPreviews] = useState<Record<string, boolean>>({});
+  const [collapsedNodeContent, setCollapsedNodeContent] = useState<Record<string, Record<string, boolean>>>({});
   const canvasContentRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dragStateRef = useRef({
@@ -125,6 +131,7 @@ export default function App() {
     pointerStartY: 0,
     wasDragging: false,
   });
+  const skipClickRef = useRef(false);
   const [edgeLines, setEdgeLines] = useState<
     {
       id: string;
@@ -332,6 +339,7 @@ export default function App() {
 
   const handleNodePointerDown = (event: ReactPointerEvent<HTMLButtonElement>, nodeId: string) => {
     if (event.button !== 0) return;
+    skipClickRef.current = false;
     const position = nodePositions[nodeId] ?? { x: 0, y: 0 };
     dragStateRef.current = {
       nodeId,
@@ -363,6 +371,7 @@ export default function App() {
       const distance = Math.hypot(dx, dy);
       if (distance < 3) return;
       state.wasDragging = true;
+      skipClickRef.current = true;
       setDraggingNodeId(state.nodeId);
     }
 
@@ -403,6 +412,9 @@ export default function App() {
   const handleNodePointerCancel = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const state = dragStateRef.current;
     if (state.pointerId !== event.pointerId) return;
+    if (state.wasDragging) {
+      skipClickRef.current = true;
+    }
     if (event.currentTarget.releasePointerCapture) {
       try {
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -413,6 +425,14 @@ export default function App() {
       }
     }
     resetDragState();
+  };
+
+  const handleNodeCardClick = (nodeId: string) => {
+    if (skipClickRef.current) {
+      skipClickRef.current = false;
+      return;
+    }
+    setSelectedNodeId(nodeId);
   };
 
   const handleRunEvent = (event: RunEvent) => {
@@ -435,6 +455,12 @@ export default function App() {
           output: event.payload,
         },
       }));
+      setCollapsedNodeContent((prev) => {
+        if (!prev[event.nodeId]) return prev;
+        const next = { ...prev };
+        delete next[event.nodeId];
+        return next;
+      });
       if (event.nodeId === 'packageOutput') {
         const payload = event.payload as { brief?: string };
         if (payload?.brief) {
@@ -477,6 +503,7 @@ export default function App() {
     setNodeDetails(merged);
     if (detail.brief) setBrief(detail.brief);
     if (detail.usage) setUsage(detail.usage);
+    setCollapsedNodeContent({});
   };
 
   const handleInputChange = (field: keyof SeedFormState) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -495,6 +522,7 @@ export default function App() {
     setBrief('');
     setUsage(null);
     setSelectedNodeId('seed');
+    setCollapsedNodeContent({});
   };
 
   const handleStartRun = async () => {
@@ -569,15 +597,20 @@ export default function App() {
     const sanitized: IdeaPreview[] = [];
     for (const idea of ideasValue) {
       if (!idea || typeof idea !== 'object') continue;
-      const { title, description } = idea as Record<string, unknown>;
+      const { title, description, rationale, risk } = idea as Record<string, unknown>;
       if (typeof title !== 'string') continue;
       const cleanedTitle = tidyText(title);
       if (!cleanedTitle) continue;
       const cleanedDescription =
         typeof description === 'string' && description.trim() ? tidyText(description) : undefined;
+      const cleanedRationale =
+        typeof rationale === 'string' && rationale.trim() ? tidyText(rationale) : undefined;
+      const cleanedRisk = typeof risk === 'string' && risk.trim() ? tidyText(risk) : undefined;
       sanitized.push({
         title: cleanedTitle,
         ...(cleanedDescription ? { description: cleanedDescription } : {}),
+        ...(cleanedRationale ? { rationale: cleanedRationale } : {}),
+        ...(cleanedRisk ? { risk: cleanedRisk } : {}),
       });
     }
     return sanitized;
@@ -598,6 +631,20 @@ export default function App() {
       ...prev,
       [nodeId]: !prev[nodeId],
     }));
+  }, []);
+
+  const toggleNodeContent = useCallback((nodeId: string, contentId: string) => {
+    setCollapsedNodeContent((prev) => {
+      const nodeState = prev[nodeId] || {};
+      const nextNodeState = {
+        ...nodeState,
+        [contentId]: !nodeState[contentId],
+      };
+      return {
+        ...prev,
+        [nodeId]: nextNodeState,
+      };
+    });
   }, []);
 
   const truncateText = useCallback(
@@ -652,14 +699,22 @@ export default function App() {
       }
 
       if (nodeId === 'divergeGenerate') {
+        const divergeOutput = node.output as DivergeNodeOutput | undefined;
         const ideas = extractIdeas(node.output);
+        const overview = divergeOutput?.overview;
+        const summary = divergeOutput?.summary ? tidyText(divergeOutput.summary) : '';
         if (!ideas.length) {
           return (
             <div className="node-preview muted">
-              <p className="node-card-info muted">No ideas captured yet.</p>
+              <p className="node-card-info muted">{summary || 'No ideas captured yet.'}</p>
             </div>
           );
         }
+        const metaParts: string[] = [`${ideas.length} idea${ideas.length === 1 ? '' : 's'}`];
+        if (overview?.model) {
+          metaParts.push(overview.model);
+        }
+        const metaLabel = metaParts.join(' • ');
         const MAX_VISIBLE = 5;
         const visibleIdeas = isExpanded ? ideas : ideas.slice(0, MAX_VISIBLE);
         const hiddenCount = ideas.length - visibleIdeas.length;
@@ -667,20 +722,67 @@ export default function App() {
         return (
           <div className="node-preview">
             <div className="node-preview-header">
-              <span className="node-preview-title">Ideas</span>
-              <span className="node-preview-meta">{ideas.length} idea{ideas.length === 1 ? '' : 's'}</span>
+              <span className="node-preview-title">{divergeOutput?.title ?? 'Ideas'}</span>
+              <span className="node-preview-meta">{metaLabel}</span>
             </div>
+            {summary && <p className="node-card-info">{summary}</p>}
             <div className="idea-card-list" aria-label="Generated ideas">
               {visibleIdeas.map((idea, index) => {
+                const ideaKey = `idea-${index}`;
+                const contentId = `${nodeId}-${ideaKey}`;
+                const isIdeaCollapsed = collapsedNodeContent[nodeId]?.[ideaKey] ?? false;
+                const handleIdeaToggle = () => toggleNodeContent(nodeId, ideaKey);
                 const description = idea.description
                   ? isExpanded
                     ? idea.description
                     : truncateText(idea.description, 120)
                   : null;
+                const rationale = idea.rationale
+                  ? isExpanded
+                    ? idea.rationale
+                    : truncateText(idea.rationale, 120)
+                  : null;
+                const risk = idea.risk
+                  ? isExpanded
+                    ? idea.risk
+                    : truncateText(idea.risk, 110)
+                  : null;
+                const collapsedPreview = idea.description
+                  ? truncateText(idea.description, 110)
+                  : idea.rationale
+                  ? truncateText(idea.rationale, 110)
+                  : idea.risk
+                  ? truncateText(idea.risk, 110)
+                  : null;
                 return (
-                  <article key={`${idea.title}-${index}`} className="idea-card">
-                    <h4>{idea.title}</h4>
-                    {description && <p>{description}</p>}
+                  <article
+                    key={`${idea.title}-${index}`}
+                    className={`idea-card ${isIdeaCollapsed ? 'collapsed' : ''}`.trim()}
+                  >
+                    <button
+                      type="button"
+                      className="idea-card-toggle"
+                      onClick={handleIdeaToggle}
+                      aria-expanded={!isIdeaCollapsed}
+                      aria-controls={contentId}
+                    >
+                      <span className="idea-card-title">{idea.title}</span>
+                      <span className="collapse-indicator idea-collapse-indicator" aria-hidden="true">
+                        {isIdeaCollapsed ? '+' : '−'}
+                      </span>
+                    </button>
+                    {collapsedPreview && isIdeaCollapsed && (
+                      <p className="idea-card-preview">{collapsedPreview}</p>
+                    )}
+                    <div className="idea-card-body" id={contentId} hidden={isIdeaCollapsed}>
+                      {description && <p>{description}</p>}
+                      {rationale && (
+                        <p className="idea-card-meta">
+                          <strong>Rationale:</strong> {rationale}
+                        </p>
+                      )}
+                      {risk && <p className="idea-card-risk">Risk: {risk}</p>}
+                    </div>
                   </article>
                 );
               })}
@@ -695,8 +797,33 @@ export default function App() {
       }
 
       if (nodeId === 'packageOutput') {
+        const packageOutput = node.output as PackageNodeOutput | undefined;
         const briefSnippet = extractBrief(node.output);
-        if (!briefSnippet) {
+        const summary = packageOutput?.summary ? tidyText(packageOutput.summary) : '';
+        const sectionsFromOutput = (packageOutput?.sections ?? [])
+          .map((section) => ({
+            title: tidyText(section.title || ''),
+            body: tidyText(section.body || ''),
+          }))
+          .filter((section) => section.body.length > 0);
+        let previewSections = sectionsFromOutput;
+        if (!previewSections.length && briefSnippet) {
+          previewSections = briefSnippet
+            .split(/\n{2,}/)
+            .map((section) => section.trim())
+            .filter(Boolean)
+            .map((section, index) => {
+              const colonIndex = section.indexOf(':');
+              if (colonIndex > 0 && colonIndex < 80) {
+                const heading = tidyText(section.slice(0, colonIndex));
+                const body = tidyText(section.slice(colonIndex + 1));
+                return { title: heading || `Section ${index + 1}`, body };
+              }
+              return { title: `Section ${index + 1}`, body: tidyText(section) };
+            })
+            .filter((section) => section.body.length > 0);
+        }
+        if (!previewSections.length && !summary) {
           return (
             <div className="node-preview muted">
               <p className="node-card-info muted">Brief will appear after packaging.</p>
@@ -704,51 +831,80 @@ export default function App() {
           );
         }
 
-        const wordCount = briefSnippet.trim() ? briefSnippet.trim().split(/\s+/).length : 0;
-        const sections = briefSnippet
-          .split(/\n{2,}/)
-          .map((section) => section.trim())
-          .filter(Boolean);
-        const cleanedSections = sections
-          .map((section) => tidyText(section))
-          .filter((section) => section.length > 0);
-        const MAX_SECTIONS = 2;
-        const visibleSections = isExpanded
-          ? cleanedSections
-          : cleanedSections.slice(0, MAX_SECTIONS);
-        const hiddenCount = cleanedSections.length - visibleSections.length;
+        const wordCount = briefSnippet?.trim() ? briefSnippet.trim().split(/\s+/).length : 0;
+        const metadata = packageOutput?.metadata;
+        const metaParts: string[] = [];
+        if (metadata) {
+          if (typeof metadata.selectedCount === 'number') {
+            metaParts.push(`${metadata.selectedCount} selected`);
+          }
+          if (typeof metadata.totalGenerated === 'number') {
+            metaParts.push(`${metadata.totalGenerated} generated`);
+          }
+        }
+        if (wordCount > 0) {
+          metaParts.push(`${wordCount} words`);
+        }
+        const metaLabel = metaParts.join(' • ');
 
+        const hasPreviewSections = previewSections.length > 0;
+        const MAX_SECTIONS = 2;
+        const visibleSections = hasPreviewSections
+          ? (isExpanded ? previewSections : previewSections.slice(0, MAX_SECTIONS))
+          : [];
+        const hiddenCount = hasPreviewSections ? previewSections.length - visibleSections.length : 0;
         const briefClassName = `brief-preview ${isExpanded ? 'expanded' : ''}`.trim();
 
         return (
           <div className="node-preview">
             <div className="node-preview-header">
-              <span className="node-preview-title">Packaged Brief</span>
-              <span className="node-preview-meta">{wordCount} words</span>
+              <span className="node-preview-title">{packageOutput?.title ?? 'Packaged Brief'}</span>
+              {metaLabel && <span className="node-preview-meta">{metaLabel}</span>}
             </div>
-            <div className={briefClassName} aria-label="Brief preview">
-              {visibleSections.map((section, index) => {
-                const colonIndex = section.indexOf(':');
-                let heading = `Section ${index + 1}`;
-                let body = section;
-                if (colonIndex > 0 && colonIndex < 80) {
-                  heading = tidyText(section.slice(0, colonIndex));
-                  body = tidyText(section.slice(colonIndex + 1));
-                }
-                const displayBody = isExpanded ? body : truncateText(body, 240);
-                const { primary, secondary } = formatBriefHeading(heading, index);
-                return (
-                  <section key={`${index}-${section.slice(0, 8)}`} className="brief-section">
-                    <div className="brief-section-heading" aria-hidden="true">
-                      <span className="brief-section-heading-main">{primary}</span>
-                      {secondary && <span className="brief-section-heading-sub">{secondary}</span>}
-                    </div>
-                    <h4 className="sr-only">{heading}</h4>
-                    <p>{displayBody}</p>
-                  </section>
-                );
-              })}
-            </div>
+            {summary && <p className="node-card-info">{summary}</p>}
+            {hasPreviewSections && (
+              <div className={briefClassName} aria-label="Brief preview">
+                {visibleSections.map((section, index) => {
+                  const heading = section.title || `Section ${index + 1}`;
+                  const sectionKey = `section-${index}`;
+                  const bodyId = `${nodeId}-${sectionKey}`;
+                  const isSectionCollapsed = collapsedNodeContent[nodeId]?.[sectionKey] ?? false;
+                  const handleSectionToggle = () => toggleNodeContent(nodeId, sectionKey);
+                  const displayBody = isExpanded ? section.body : truncateText(section.body, 240);
+                  const collapsedPreview = truncateText(section.body, 200);
+                  const { primary, secondary } = formatBriefHeading(heading, index);
+                  return (
+                    <section
+                      key={`${index}-${heading.slice(0, 12)}`}
+                      className={`brief-section ${isSectionCollapsed ? 'collapsed' : ''}`.trim()}
+                    >
+                      <button
+                        type="button"
+                        className="brief-section-toggle"
+                        onClick={handleSectionToggle}
+                        aria-expanded={!isSectionCollapsed}
+                        aria-controls={bodyId}
+                      >
+                        <div className="brief-section-heading">
+                          <span className="brief-section-heading-main">{primary}</span>
+                          {secondary && <span className="brief-section-heading-sub">{secondary}</span>}
+                        </div>
+                        <span className="collapse-indicator brief-collapse-indicator" aria-hidden="true">
+                          {isSectionCollapsed ? '+' : '−'}
+                        </span>
+                      </button>
+                      {isSectionCollapsed && collapsedPreview && (
+                        <p className="brief-section-preview">{collapsedPreview}</p>
+                      )}
+                      <div className="brief-section-body" id={bodyId} hidden={isSectionCollapsed}>
+                        <h4 className="sr-only">{heading}</h4>
+                        <p>{displayBody}</p>
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            )}
             {hiddenCount > 0 && (
               <button type="button" className="node-preview-toggle" onClick={handleToggle}>
                 {isExpanded
@@ -761,35 +917,50 @@ export default function App() {
       }
 
       if (nodeId === 'seed') {
-        const seedInput = node.output as
-          |
-            {
+        const seedOutput = node.output as SeedNodeOutput | undefined;
+        const fallbackSeed = node.input as
+          | {
               goal?: string;
               audience?: string;
               constraints?: string;
             }
           | undefined;
-        if (!seedInput) return null;
-        const goalText = tidyText(seedInput.goal || '—');
-        const audienceText = tidyText(seedInput.audience || '—');
-        const constraintsText = tidyText(seedInput.constraints || '—');
+        const details = seedOutput?.details ?? fallbackSeed;
+        if (!details) return null;
+        const goalText = truncateText(details.goal || '', 140) || '—';
+        const audienceText = truncateText(details.audience || '', 140) || '—';
+        const constraintsText = truncateText(details.constraints || '', 160) || '—';
+        const summary = seedOutput?.summary ? tidyText(seedOutput.summary) : '';
+        const parameters = seedOutput?.parameters;
+        const metaParts: string[] = [];
+        if (parameters) {
+          if (typeof parameters.requestedIdeas === 'number' && parameters.requestedIdeas > 0) {
+            metaParts.push(`${parameters.requestedIdeas} idea${parameters.requestedIdeas === 1 ? '' : 's'}`);
+          }
+          if (typeof parameters.topK === 'number' && parameters.topK > 0) {
+            metaParts.push(`top ${parameters.topK}`);
+          }
+        }
+        const metaLabel = metaParts.join(' • ');
         return (
           <div className="node-preview">
             <div className="node-preview-header">
-              <span className="node-preview-title">Seed</span>
+              <span className="node-preview-title">{seedOutput?.title ?? 'Seed'}</span>
+              {metaLabel && <span className="node-preview-meta">{metaLabel}</span>}
             </div>
+            {summary && <p className="node-card-info">{summary}</p>}
             <ul className="seed-summary">
               <li>
                 <span>Goal</span>
-                <strong>{truncateText(goalText, 140)}</strong>
+                <strong>{goalText}</strong>
               </li>
               <li>
                 <span>Audience</span>
-                <strong>{truncateText(audienceText, 140)}</strong>
+                <strong>{audienceText}</strong>
               </li>
               <li>
                 <span>Constraints</span>
-                <strong>{truncateText(constraintsText, 160)}</strong>
+                <strong>{constraintsText}</strong>
               </li>
             </ul>
           </div>
@@ -800,10 +971,12 @@ export default function App() {
     },
     [
       expandedPreviews,
+      collapsedNodeContent,
       extractBrief,
       extractIdeas,
       formatBriefHeading,
       tidyText,
+      toggleNodeContent,
       togglePreviewExpansion,
       truncateText,
     ],
@@ -987,14 +1160,16 @@ export default function App() {
                       <button
                         type="button"
                         className={`node-card-toggle ${isDragging ? 'dragging' : ''}`.trim()}
-                        onClick={() => setSelectedNodeId(node.id)}
+                        onClick={() => handleNodeCardClick(node.id)}
                         onPointerDown={(event) => handleNodePointerDown(event, node.id)}
                         onPointerMove={handleNodePointerMove}
                         onPointerUp={handleNodePointerUp}
                         onPointerCancel={handleNodePointerCancel}
                       >
-                        <span className="node-label">{node.label}</span>
-                        <span className="node-status">{status}</span>
+                        <span className="node-toggle-content">
+                          <span className="node-label">{node.label}</span>
+                          <span className="node-status">{status}</span>
+                        </span>
                       </button>
                       {isSeedNode && (
                         <div className="node-card-body">

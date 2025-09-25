@@ -4,12 +4,16 @@ import path from 'path';
 import { generateIdeas } from '../services/gemini';
 import type { AppConfig } from '../utils/env';
 import {
+  BriefSection,
+  DivergeNodeOutput,
   GeminiUsage,
   Idea,
+  PackageNodeOutput,
   PipelineGraph,
   PipelineOutput,
   PipelineRunState,
   SeedInput,
+  SeedNodeOutput,
 } from './types';
 
 export type RunEvent =
@@ -50,6 +54,7 @@ export const GRAPH: PipelineGraph = {
 };
 
 const NODE_DIR = 'node_io';
+const MAX_DIVERGE_IDEAS = 6;
 
 export function createRunId(date: Date = new Date()): string {
   return date.toISOString().replace(/[:.]/g, '-');
@@ -103,6 +108,49 @@ function buildBrief(seed: SeedInput, ideas: Idea[], k: number): string {
   return lines.join('\n');
 }
 
+function ensureValue(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+}
+
+function formatConceptSummary(ideas: Idea[]): string {
+  if (!ideas.length) {
+    return 'No concepts selected yet. Re-run packaging once ideas are available.';
+  }
+  return ideas
+    .map((idea, index) => {
+      const base = `${index + 1}. ${idea.title} — ${idea.description} Rationale: ${idea.rationale}`;
+      if (idea.risk) {
+        return `${base} Risk Watch: ${idea.risk}`;
+      }
+      return base;
+    })
+    .join('\n');
+}
+
+function buildPackageSections(
+  seed: SeedInput,
+  selectedIdeas: Idea[],
+  totalGenerated: number,
+  selectedCount: number,
+): BriefSection[] {
+  const goal = ensureValue(seed.goal, 'Goal not specified.');
+  const audience = ensureValue(seed.audience, 'Audience not specified.');
+  const constraints = ensureValue(seed.constraints, 'Constraints not specified.');
+  const conceptSummary = formatConceptSummary(selectedIdeas);
+
+  return [
+    { title: 'Objective', body: goal },
+    { title: 'Target Audience', body: audience },
+    { title: 'Guardrails', body: constraints },
+    { title: 'Concept Snapshot', body: conceptSummary },
+    {
+      title: 'Engagement Summary',
+      body: `Generated ${totalGenerated} structured concepts and elevated the top ${selectedCount} for packaging.`,
+    },
+  ];
+}
+
 async function persistNodeIO(
   runDir: string,
   nodeId: string,
@@ -140,7 +188,19 @@ export async function runPipeline(
   await ensureDir(runDir);
   await persistGraph(runDir);
 
-  const sanitized = sanitizeSeed(seed);
+  let sanitized = sanitizeSeed(seed);
+  const requestedIdeas = sanitized.n ?? config.defaultN;
+  const requestedTopK = sanitized.k ?? config.defaultK;
+  const ideaCount = Math.min(MAX_DIVERGE_IDEAS, requestedIdeas);
+  const effectiveTopK = Math.max(1, Math.min(requestedTopK, ideaCount));
+  const wasIdeaCountCapped = requestedIdeas !== ideaCount;
+  const wasTopKCapped = requestedTopK !== effectiveTopK;
+
+  sanitized = {
+    ...sanitized,
+    n: ideaCount,
+    k: effectiveTopK,
+  };
 
   const state: PipelineRunState = {
     id: runId,
@@ -201,37 +261,72 @@ export async function runPipeline(
     emitter.emit('event', { type: 'node-status', runId, nodeId, status, timestamp, error });
   };
 
+  const plannedTopK = sanitized.k ?? effectiveTopK;
+  const ideaSummaryText = wasIdeaCountCapped
+    ? `${ideaCount} (capped from ${requestedIdeas})`
+    : `${ideaCount}`;
+  const topKSummaryText = wasTopKCapped
+    ? `${plannedTopK} (capped from ${requestedTopK})`
+    : `${plannedTopK}`;
+
   await markNodeStatus('seed', 'running');
+  const seedOutput: SeedNodeOutput = {
+    title: 'Seed Summary',
+    summary: `Prepared seed brief requesting ${ideaSummaryText} ideas and spotlighting the top ${topKSummaryText} for packaging.`,
+    details: {
+      goal: sanitized.goal,
+      audience: sanitized.audience,
+      constraints: sanitized.constraints,
+    },
+    parameters: {
+      requestedIdeas: ideaCount,
+      topK: plannedTopK,
+    },
+  };
   await updateNode('seed', {
-    output: sanitized,
+    output: seedOutput,
   });
   await markNodeStatus('seed', 'completed');
   await persistNodeIO(runDir, 'seed', {
     nodeId: 'seed',
     status: 'completed',
     input: sanitized,
-    output: sanitized,
+    output: seedOutput,
     timestamps: {
       startedAt: state.nodes.seed.startedAt,
       finishedAt: state.nodes.seed.finishedAt,
     },
   });
-  emitter.emit('event', { type: 'node-io', runId, nodeId: 'seed', payload: sanitized });
+  emitter.emit('event', { type: 'node-io', runId, nodeId: 'seed', payload: seedOutput });
 
-  const ideaCount = sanitized.n ?? config.defaultN;
   await markNodeStatus('divergeGenerate', 'running');
 
   let ideas: Idea[] = [];
   let usageMeta: GeminiUsage = {};
+  let divergeOutput: DivergeNodeOutput | null = null;
 
   try {
     const start = new Date().toISOString();
     const { ideas: generatedIdeas, usage, raw } = await generateIdeas(config, sanitized, ideaCount);
-    ideas = generatedIdeas;
+    const limitedIdeas = generatedIdeas.slice(0, ideaCount);
+    ideas = limitedIdeas;
     usageMeta = usage;
+    const conceptCount = limitedIdeas.length;
+    const pluralSuffix = conceptCount === 1 ? '' : 's';
+    divergeOutput = {
+      title: 'Structured Idea Portfolio',
+      summary: `Generated ${conceptCount} structured concept${pluralSuffix} leveraging ${config.geminiModel}.`,
+      overview: {
+        ideaCount: conceptCount,
+        model: config.geminiModel,
+        requestedIdeas: ideaCount,
+      },
+      ideas: limitedIdeas,
+      usage: usageMeta,
+    };
     await updateNode('divergeGenerate', {
       input: { n: ideaCount, seed: sanitized },
-      output: { ideas: generatedIdeas },
+      output: divergeOutput,
       finishedAt: new Date().toISOString(),
       startedAt: state.nodes.divergeGenerate.startedAt ?? start,
     });
@@ -240,7 +335,8 @@ export async function runPipeline(
       nodeId: 'divergeGenerate',
       status: 'completed',
       input: { n: ideaCount, seed: sanitized },
-      output: { ideas: generatedIdeas },
+      output: divergeOutput,
+      usage: usageMeta,
       raw,
       timestamps: {
         startedAt: state.nodes.divergeGenerate.startedAt ?? start,
@@ -251,7 +347,7 @@ export async function runPipeline(
       type: 'node-io',
       runId,
       nodeId: 'divergeGenerate',
-      payload: { ideas: generatedIdeas },
+      payload: divergeOutput,
     });
   } catch (error) {
     const message = (error as Error).message;
@@ -283,26 +379,43 @@ export async function runPipeline(
     throw error;
   }
 
-  const k = Math.max(1, Math.min(ideas.length, sanitized.k ?? config.defaultK));
+  const k = Math.max(1, Math.min(ideas.length, plannedTopK));
   await markNodeStatus('packageOutput', 'running');
   const brief = buildBrief(sanitized, ideas, k);
+  const selectedIdeas = ideas.slice(0, k);
+  const selectedCount = selectedIdeas.length;
+  const packageSections = buildPackageSections(sanitized, selectedIdeas, ideas.length, selectedCount);
+  const packageSummary =
+    selectedCount > 0
+      ? `Curated the top ${selectedCount} concept${selectedCount === 1 ? '' : 's'} into a stakeholder-ready brief.`
+      : 'Prepared a brief shell; regenerate concepts to populate the highlights.';
+  const packageOutput: PackageNodeOutput = {
+    title: 'Executive Creative Brief',
+    summary: packageSummary,
+    metadata: {
+      selectedCount,
+      totalGenerated: ideas.length,
+    },
+    sections: packageSections,
+    brief,
+  };
   await updateNode('packageOutput', {
     input: { k, ideas },
-    output: { brief },
+    output: packageOutput,
   });
   await markNodeStatus('packageOutput', 'completed');
   await persistNodeIO(runDir, 'packageOutput', {
     nodeId: 'packageOutput',
     status: 'completed',
     input: { k, ideas },
-    output: { brief },
+    output: packageOutput,
     timestamps: {
       startedAt: state.nodes.packageOutput.startedAt,
       finishedAt: state.nodes.packageOutput.finishedAt,
     },
   });
   await persistBrief(runDir, brief);
-  emitter.emit('event', { type: 'node-io', runId, nodeId: 'packageOutput', payload: { brief } });
+  emitter.emit('event', { type: 'node-io', runId, nodeId: 'packageOutput', payload: packageOutput });
 
   state.status = 'completed';
   state.usage = usageMeta;
@@ -310,5 +423,28 @@ export async function runPipeline(
   await persistUsage(runDir, usageMeta);
   emitter.emit('event', { type: 'run-status', runId, status: 'completed', timestamp: new Date().toISOString() });
 
-  return { runId, ideas, brief, usage: usageMeta } satisfies PipelineOutput;
+  const finalDivergeOutput: DivergeNodeOutput =
+    divergeOutput ?? {
+      title: 'Structured Idea Portfolio',
+      summary: 'No concepts generated during this run.',
+      overview: {
+        ideaCount: ideas.length,
+        model: config.geminiModel,
+        requestedIdeas: ideaCount,
+      },
+      ideas,
+      usage: usageMeta,
+    };
+
+  return {
+    runId,
+    ideas,
+    brief,
+    usage: usageMeta,
+    nodes: {
+      seed: seedOutput,
+      divergeGenerate: finalDivergeOutput,
+      packageOutput,
+    },
+  } satisfies PipelineOutput;
 }

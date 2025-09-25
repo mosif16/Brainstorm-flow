@@ -627,6 +627,32 @@ input:focus {
   cursor: grab;
 }
 
+.node-toggle-content {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.collapse-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid #2c3a4b;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #9bb2cf;
+  pointer-events: none;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.idea-collapse-indicator,
+.brief-collapse-indicator {
+  width: 1.4rem;
+  height: 1.4rem;
+  font-size: 0.9rem;
+}
+
 .node-card-toggle.dragging {
   cursor: grabbing;
 }
@@ -772,11 +798,59 @@ input:focus {
   color: #cad8f3;
 }
 
-.idea-card h4 {
-  margin: 0;
+.idea-card-toggle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.idea-card-toggle:hover,
+.idea-card-toggle:focus-visible {
+  color: #dce8ff;
+  outline: none;
+}
+
+.idea-card-title {
+  display: inline-block;
   font-size: 0.86rem;
   font-weight: 600;
   color: #dce8ff;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.idea-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.idea-card-body[hidden] {
+  display: none;
+}
+
+.idea-card-preview {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: #7d8ca3;
+}
+
+.idea-card.collapsed {
+  gap: 0.3rem;
+}
+
+.idea-card.collapsed .idea-collapse-indicator {
+  background: #101722;
+  border-color: #1f2a38;
 }
 
 .idea-card p {
@@ -784,6 +858,68 @@ input:focus {
   font-size: 0.75rem;
   line-height: 1.35;
   color: #95abc7;
+}
+
+.idea-card-meta {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: #a6b8d4;
+}
+
+.idea-card-meta strong {
+  font-weight: 600;
+  color: #dce8ff;
+}
+
+.idea-card-risk {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #ff9b74;
+}
+
+.brief-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin-bottom: 0.35rem;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.brief-section-toggle:hover,
+.brief-section-toggle:focus-visible {
+  color: #e6f0ff;
+  outline: none;
+}
+
+.brief-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.brief-section-body[hidden] {
+  display: none;
+}
+
+.brief-section-preview {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: #7d8ca3;
+}
+
+.brief-section.collapsed .brief-collapse-indicator {
+  background: #101722;
+  border-color: #1f2a38;
 }
 
 .brief-preview {
@@ -821,7 +957,7 @@ input:focus {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
-  margin-bottom: 0.4rem;
+  margin: 0;
 }
 
 .brief-section-heading-main {

@@ -17,6 +17,57 @@ export interface GeminiUsage {
   promptTokenCount?: number;
   candidatesTokenCount?: number;
   totalTokenCount?: number;
+  thoughtsTokenCount?: number;
+  toolUsePromptTokenCount?: number;
+  cachedContentTokenCount?: number;
+}
+
+export interface SeedNodeOutput {
+  title: string;
+  summary: string;
+  details: {
+    goal: string;
+    audience: string;
+    constraints: string;
+  };
+  parameters: {
+    requestedIdeas: number;
+    topK: number;
+  };
+}
+
+export interface DivergeNodeOutput {
+  title: string;
+  summary: string;
+  overview: {
+    ideaCount: number;
+    model: string;
+    requestedIdeas: number;
+  };
+  ideas: Idea[];
+  usage: GeminiUsage;
+}
+
+export interface BriefSection {
+  title: string;
+  body: string;
+}
+
+export interface PackageNodeOutput {
+  title: string;
+  summary: string;
+  metadata: {
+    selectedCount: number;
+    totalGenerated: number;
+  };
+  sections: BriefSection[];
+  brief: string;
+}
+
+export interface PipelineNodeOutputs {
+  seed: SeedNodeOutput;
+  divergeGenerate: DivergeNodeOutput;
+  packageOutput: PackageNodeOutput;
 }
 
 export type NodeId = 'seed' | 'divergeGenerate' | 'packageOutput';
@@ -51,4 +102,5 @@ export interface PipelineOutput {
   ideas: Idea[];
   brief: string;
   usage: GeminiUsage;
+  nodes: PipelineNodeOutputs;
 }
