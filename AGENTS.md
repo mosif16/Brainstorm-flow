@@ -25,6 +25,9 @@
 - PRs should include: summary of changes, testing notes (`npm run build`, manual Gemini run), screenshots or GIFs for UI tweaks, and references to tracker tickets.
 
 ## Security & Configuration Tips
-- Never expose `GEMINI_API_KEY`; only load it server-side via `.env`. Client should rely on `VITE_API_BASE` for backend calls.
-- Keep `runs/` writable but non-public in production; if you host the frontend separately, disable direct listing of artifacts or secure the `/runs/assets` route.
-- Validate env defaults in `server/src/utils/env.ts` when introducing new config.
+- Never commit real credentials. All `.env*` files stay local and are ignored by Git; share only `*.env.example` with placeholders.
+- Rotate any leaked secrets immediately and scrub them from history before publishing.
+- Prefer `start-dev.sh` / `stop-dev.sh` so secrets remain in local env files during development.
+- Keep `runs/` writable but not publicly exposed; secure or disable `/runs/assets` in production deployments.
+- Validate environment defaults in `server/src/utils/env.ts` whenever config changes are introduced.
+- Use read-only API keys for demos. For production, restrict Gemini keys by host/IP where possible.
