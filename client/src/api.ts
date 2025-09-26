@@ -47,3 +47,25 @@ export function briefDownloadUrl(runId: string): string {
 export function eventsUrl(runId: string): string {
   return `${API_BASE}/runs/${runId}/events`;
 }
+
+export async function generateRefinement(payload: {
+  kind: 'ui-flow' | 'capability-breakdown' | 'experience-polish';
+  idea: {
+    title: string;
+    description?: string;
+    rationale?: string;
+    risk?: string;
+  };
+  context?: {
+    goal?: string;
+    audience?: string;
+    constraints?: string;
+  };
+}): Promise<{ fields: Record<string, string>; usage?: Record<string, unknown>; raw?: string }> {
+  const res = await fetch(`${API_BASE}/refinements`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<{ fields: Record<string, string>; usage?: Record<string, unknown>; raw?: string }>(res);
+}

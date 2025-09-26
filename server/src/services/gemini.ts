@@ -87,7 +87,7 @@ function parseIdeas(raw: string): Idea[] {
   return cleaned;
 }
 
-function mapUsage(metadata?: GenerateContentResponseUsageMetadata | null): GeminiUsage {
+export function mapUsage(metadata?: GenerateContentResponseUsageMetadata | null): GeminiUsage {
   const usage: GeminiUsage = {};
   if (!metadata) return usage;
   if (metadata.promptTokenCount !== undefined) {
@@ -111,7 +111,7 @@ function mapUsage(metadata?: GenerateContentResponseUsageMetadata | null): Gemin
   return usage;
 }
 
-function readResponseText(
+export function readResponseText(
   response: { text?: unknown },
 ): string {
   const candidate = response.text;

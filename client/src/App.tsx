@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { ChangeEvent } from 'react';
-import { fetchGraph, fetchRunDetail, fetchRuns, startRun, briefDownloadUrl } from './api';
+import { fetchGraph, fetchRunDetail, fetchRuns, startRun, briefDownloadUrl, generateRefinement } from './api';
 import { useRunStream } from './hooks/useRunStream';
 import type {
   Graph,
@@ -222,6 +222,7 @@ export default function App() {
   const [collapsedNodeContent, setCollapsedNodeContent] = useState<Record<string, Record<string, boolean>>>({});
   const [ideaNodesByRun, setIdeaNodesByRun] = useState<Record<string, PromotedIdeaNode[]>>({});
   const [refinementNodesByRun, setRefinementNodesByRun] = useState<Record<string, RefinementNode[]>>({});
+  const [refinementLoading, setRefinementLoading] = useState<Record<string, boolean>>({});
   const canvasContentRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dragStateRef = useRef({
@@ -351,6 +352,21 @@ export default function App() {
         if (id in next) {
           delete next[id];
           changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    setRefinementLoading((prev) => {
+      if (!Object.keys(prev).length) return prev;
+      let changed = false;
+      const next: Record<string, boolean> = { ...prev };
+      for (const id of nodeIds) {
+        const ideaPrefix = `${id}:`;
+        for (const key of Object.keys(next)) {
+          if (key === id || key.startsWith(ideaPrefix)) {
+            delete next[key];
+            changed = true;
+          }
         }
       }
       return changed ? next : prev;
@@ -531,50 +547,94 @@ export default function App() {
   );
 
   const handleAddRefinementNode = useCallback(
-    (ideaNodeId: string, kind: RefinementNodeKind) => {
+    async (ideaNodeId: string, kind: RefinementNodeKind) => {
       const template = REFINEMENT_TEMPLATES[kind];
       if (!template) return;
-      if (!ideaNodeById[ideaNodeId]) return;
+      const ideaNode = ideaNodeById[ideaNodeId];
+      if (!ideaNode) return;
 
-      let createdNodeId: string | null = null;
-      setRefinementNodesByRun((prev) => {
-        const runNodes = prev[activeRunKey] ?? [];
-        const existingForKind = runNodes.find((node) => node.sourceNodeId === ideaNodeId && node.kind === kind);
-        if (existingForKind) {
-          createdNodeId = existingForKind.id;
-          return prev;
+      const runNodes = refinementNodesByRun[activeRunKey] ?? [];
+      const existingForKind = runNodes.find((node) => node.sourceNodeId === ideaNodeId && node.kind === kind);
+      if (existingForKind) {
+        if (existingForKind.id !== selectedNodeId) {
+          handleFocusIdeaNode(existingForKind.id);
         }
-        const siblings = runNodes.filter((node) => node.sourceNodeId === ideaNodeId && node.kind === kind);
-        const nodeId = createRefinementNodeId(ideaNodeId, kind, siblings.length);
-        const defaultFields = template.fields.reduce<Record<string, string>>((acc, field) => {
-          acc[field.key] = '';
-          return acc;
-        }, {});
-        const nextNode: RefinementNode = {
-          id: nodeId,
-          label: template.label,
-          kind,
-          sourceNodeId: ideaNodeId,
-          createdAt: new Date().toISOString(),
-          fields: defaultFields,
-        };
-        createdNodeId = nodeId;
-        return {
-          ...prev,
-          [activeRunKey]: [...runNodes, nextNode],
-        };
-      });
+        return;
+      }
 
-      if (createdNodeId) {
-        const nodeKey = createdNodeId;
-        setSelectedNodeId(nodeKey);
+      const loadingKey = `${ideaNodeId}:${kind}`;
+      setRefinementLoading((prev) => ({
+        ...prev,
+        [loadingKey]: true,
+      }));
+
+      try {
+        const seedOutput = nodeDetails.seed?.output as SeedNodeOutput | undefined;
+        const seedDetails = seedOutput?.details;
+        const response = await generateRefinement({
+          kind,
+          idea: {
+            title: ideaNode.idea.title,
+            description: ideaNode.idea.description,
+            rationale: ideaNode.idea.rationale,
+            risk: ideaNode.idea.risk,
+          },
+          context:
+            seedDetails ?? {
+              goal: form.goal.trim() || undefined,
+              audience: form.audience.trim() || undefined,
+              constraints: form.constraints.trim() || undefined,
+            },
+        });
+
+        let newNodeId = '';
+        setRefinementNodesByRun((prev) => {
+          const currentRunNodes = prev[activeRunKey] ?? [];
+          const siblings = currentRunNodes.filter((node) => node.sourceNodeId === ideaNodeId && node.kind === kind);
+          newNodeId = createRefinementNodeId(ideaNodeId, kind, siblings.length);
+          const nextNode: RefinementNode = {
+            id: newNodeId,
+            label: template.label,
+            kind,
+            sourceNodeId: ideaNodeId,
+            createdAt: new Date().toISOString(),
+            fields: response.fields,
+          };
+          return {
+            ...prev,
+            [activeRunKey]: [...currentRunNodes, nextNode],
+          };
+        });
+
+        if (newNodeId && newNodeId !== selectedNodeId) {
+          handleFocusIdeaNode(newNodeId);
+        }
         setExpandedPreviews((prev) => ({
           ...prev,
-          [nodeKey]: true,
+          [newNodeId]: true,
         }));
+      } catch (error) {
+        console.error('Failed to generate refinement node', error);
+      } finally {
+        setRefinementLoading((prev) => {
+          const next = { ...prev };
+          delete next[loadingKey];
+          return next;
+        });
       }
     },
-    [activeRunKey, createRefinementNodeId, ideaNodeById],
+    [
+      activeRunKey,
+      createRefinementNodeId,
+      form.audience,
+      form.constraints,
+      form.goal,
+      handleFocusIdeaNode,
+      ideaNodeById,
+      nodeDetails,
+      refinementNodesByRun,
+      selectedNodeId,
+    ],
   );
 
   const handleUpdateRefinementField = useCallback(
@@ -627,9 +687,16 @@ export default function App() {
     if (!activeIdeaNodes.length) return {} as Record<string, NodeData>;
     const map: Record<string, NodeData> = {};
     for (const node of activeIdeaNodes) {
+      const structuredOutput = {
+        type: 'idea-node',
+        id: node.id,
+        label: node.label,
+        sourceNodeId: node.sourceNodeId,
+        idea: node.idea,
+      } as const;
       map[node.id] = {
         status: 'completed',
-        output: node.idea,
+        output: structuredOutput,
         startedAt: node.createdAt,
         finishedAt: node.createdAt,
       };
@@ -641,9 +708,17 @@ export default function App() {
     if (!activeRefinementNodes.length) return {} as Record<string, NodeData>;
     const map: Record<string, NodeData> = {};
     for (const node of activeRefinementNodes) {
+      const structuredOutput = {
+        type: 'refinement-node',
+        id: node.id,
+        label: node.label,
+        kind: node.kind,
+        sourceNodeId: node.sourceNodeId,
+        fields: node.fields,
+      } as const;
       map[node.id] = {
         status: 'completed',
-        output: node.fields,
+        output: structuredOutput,
         startedAt: node.createdAt,
         finishedAt: node.createdAt,
       };
@@ -1448,16 +1523,23 @@ export default function App() {
                 const template = REFINEMENT_TEMPLATES[kind];
                 const existing = ideaRefinements.find((refinement) => refinement.kind === kind);
                 const hasKind = refinementKindsPresent.has(kind);
-                const label = hasKind ? `View ${template.label}` : `Add ${template.label}`;
+                const refinementKey = `${nodeId}:${kind}`;
+                const isLoading = Boolean(refinementLoading[refinementKey]);
+                const label = isLoading
+                  ? 'Generating…'
+                  : hasKind
+                  ? `View ${template.label}`
+                  : `Add ${template.label}`;
                 const handleAction = hasKind
                   ? () => existing && handleFocusIdeaNode(existing.id)
-                  : () => handleAddRefinementNode(nodeId, kind);
+                  : () => void handleAddRefinementNode(nodeId, kind);
                 return (
                   <button
                     key={`${nodeId}-${kind}`}
                     type="button"
                     className={`idea-card-action ${hasKind ? '' : 'outline'}`.trim()}
                     onClick={handleAction}
+                    disabled={isLoading}
                   >
                     {label}
                   </button>
@@ -1658,16 +1740,23 @@ export default function App() {
                           const template = REFINEMENT_TEMPLATES[kind];
                           const existing = ideaRefinements.find((refinement) => refinement.kind === kind);
                           const hasKind = refinementKindsPresent.has(kind);
-                          const label = hasKind ? `View ${template.label}` : `Add ${template.label}`;
+                          const refinementKey = `${promotedNodeId}:${kind}`;
+                          const isLoading = Boolean(refinementLoading[refinementKey]);
+                          const label = isLoading
+                            ? 'Generating…'
+                            : hasKind
+                            ? `View ${template.label}`
+                            : `Add ${template.label}`;
                           const handleAction = hasKind
                             ? () => existing && handleFocusIdeaNode(existing.id)
-                            : () => handleAddRefinementNode(promotedNodeId, kind);
+                            : () => void handleAddRefinementNode(promotedNodeId, kind);
                           return (
                             <button
                               key={`${promotedNodeId}-${kind}`}
                               type="button"
                               className={`idea-card-action ${hasKind ? '' : 'outline'}`.trim()}
                               onClick={handleAction}
+                              disabled={isLoading}
                             >
                               {label}
                             </button>

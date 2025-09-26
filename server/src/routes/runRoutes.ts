@@ -5,6 +5,14 @@ import type { AppConfig } from '../utils/env';
 import { createRunId, runPipeline } from '../pipeline/runPipeline';
 import type { SeedInput } from '../pipeline/types';
 import { runEventHub } from '../events/runEvents';
+import {
+  generateRefinement,
+  type RefinementKind,
+  type RefinementIdeaPayload,
+  type RefinementContextPayload,
+} from '../services/refinements';
+
+const ALLOWED_REFINEMENT_KINDS = new Set(['ui-flow', 'capability-breakdown', 'experience-polish']);
 
 function normalizeSeed(body: any): SeedInput {
   if (!body || typeof body !== 'object') {
@@ -72,6 +80,50 @@ export function createRunRouter(config: AppConfig) {
       runPipeline(config, seed, emitter, runId).catch((error) => {
         console.error(`Run ${runId} failed:`, error);
       });
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message });
+    }
+  });
+
+  router.post('/refinements', async (req, res) => {
+    try {
+      const { kind, idea, context } = req.body ?? {};
+      if (typeof kind !== 'string' || !ALLOWED_REFINEMENT_KINDS.has(kind)) {
+        throw new Error('Invalid refinement kind.');
+      }
+      if (!idea || typeof idea !== 'object') {
+        throw new Error('Idea payload is required.');
+      }
+      const { title, description, rationale, risk } = idea;
+      if (typeof title !== 'string' || title.trim().length === 0) {
+        throw new Error('Idea title is required.');
+      }
+      const ideaPayload: RefinementIdeaPayload = {
+        title: title.trim(),
+        ...(typeof description === 'string' && description.trim() ? { description: description.trim() } : {}),
+        ...(typeof rationale === 'string' && rationale.trim() ? { rationale: rationale.trim() } : {}),
+        ...(typeof risk === 'string' && risk.trim() ? { risk: risk.trim() } : {}),
+      };
+
+      const contextPayload: RefinementContextPayload | undefined =
+        context && typeof context === 'object'
+          ? {
+              ...(typeof context.goal === 'string' && context.goal.trim() ? { goal: context.goal.trim() } : {}),
+              ...(typeof context.audience === 'string' && context.audience.trim() ? { audience: context.audience.trim() } : {}),
+              ...(typeof context.constraints === 'string' && context.constraints.trim()
+                ? { constraints: context.constraints.trim() }
+                : {}),
+            }
+          : undefined;
+
+      const refinementParams = {
+        kind: kind as RefinementKind,
+        idea: ideaPayload,
+        ...(contextPayload ? { context: contextPayload } : {}),
+      };
+
+      const refinement = await generateRefinement(config, refinementParams);
+      res.json(refinement);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
     }
