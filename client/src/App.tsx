@@ -7,6 +7,8 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type CSSProperties,
+  type WheelEvent as ReactWheelEvent,
 } from 'react';
 import type { ChangeEvent } from 'react';
 import {
@@ -148,6 +150,11 @@ const REFINEMENT_TEMPLATES: Record<RefinementNodeKind, {
 
 const REFINEMENT_ORDER: RefinementNodeKind[] = ['ui-flow', 'capability-breakdown', 'experience-polish'];
 
+const PINCH_ZOOM_SENSITIVITY = 0.0025;
+const MIN_NODE_SCALE = 0.75;
+const MAX_NODE_SCALE = 1.35;
+const NODE_SCALE_STEP = 0.1;
+
 type RefinementNode = {
   id: string;
   label: string;
@@ -164,6 +171,62 @@ const initialForm: SeedFormState = {
   n: '',
   k: '',
 };
+
+type CanvasNode = {
+  id: string;
+  label: string;
+  type?: 'seed' | 'diverge' | 'idea' | 'refinement';
+};
+
+const PIPELINE_CARD_META: Record<string, { order: number; descriptor: string }> = {
+  seed: {
+    order: 1,
+    descriptor: 'Capture the inputs that define this brainstorm run.',
+  },
+  divergeGenerate: {
+    order: 2,
+    descriptor: 'Spin up structured concept directions from the seed.',
+  },
+  convergeSummarize: {
+    order: 3,
+    descriptor: 'Sift the standout ideas and articulate the takeaways.',
+  },
+  packageOutput: {
+    order: 4,
+    descriptor: 'Bundle the selected thinking into a shareable brief.',
+  },
+};
+
+type NodeHeaderMeta = {
+  orderLabel?: string;
+  description?: string;
+};
+
+function getNodeHeaderMeta(node: CanvasNode): NodeHeaderMeta {
+  const meta = PIPELINE_CARD_META[node.id];
+  if (meta) {
+    return {
+      orderLabel: meta.order.toString().padStart(2, '0'),
+      description: meta.descriptor,
+    };
+  }
+
+  if (node.type === 'idea') {
+    return {
+      description: 'Promoted concept ready for prioritization or packaging.',
+    };
+  }
+
+  if (node.type === 'refinement') {
+    return {
+      description: 'Deepen this concept with structured follow-up prompts.',
+    };
+  }
+
+  return {
+    description: 'Pipeline node output from this brainstorm run.',
+  };
+}
 
 function serialize(value: unknown): string {
   if (value === undefined || value === null) return '—';
@@ -227,6 +290,7 @@ export default function App() {
   const [isOutputSectionOpen, setIsOutputSectionOpen] = useState(true);
   const [isUsageSectionOpen, setIsUsageSectionOpen] = useState(true);
   const [zoom, setZoom] = useState(1);
+  const [nodeScale, setNodeScale] = useState(1);
   const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>({});
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [expandedPreviews, setExpandedPreviews] = useState<Record<string, boolean>>({});
@@ -587,11 +651,43 @@ export default function App() {
   );
 
   const handleAddRefinementNode = useCallback(
-    async (ideaNodeId: string, kind: RefinementNodeKind) => {
+    async (ideaNodeId: string, kind: RefinementNodeKind, sourceIdea?: IdeaPreview) => {
       const template = REFINEMENT_TEMPLATES[kind];
       if (!template) return;
-      const ideaNode = ideaNodeById[ideaNodeId];
-      if (!ideaNode) return;
+
+      let ideaNode = ideaNodeById[ideaNodeId];
+
+      if (!ideaNode && sourceIdea) {
+        const createdAt = new Date().toISOString();
+        const newIdeaNode: PromotedIdeaNode = {
+          id: ideaNodeId,
+          label: sourceIdea.title,
+          idea: sourceIdea,
+          sourceNodeId: 'divergeGenerate',
+          createdAt,
+        };
+        let didCreate = false;
+        setIdeaNodesByRun((prev) => {
+          const runNodes = prev[activeRunKey] ?? [];
+          if (runNodes.some((node) => node.id === ideaNodeId)) {
+            return prev;
+          }
+          didCreate = true;
+          return {
+            ...prev,
+            [activeRunKey]: [...runNodes, newIdeaNode],
+          };
+        });
+        if (didCreate) {
+          ideaNode = newIdeaNode;
+          setExpandedPreviews((prev) => ({
+            ...prev,
+            [ideaNodeId]: true,
+          }));
+        }
+      }
+
+      if (!ideaNode && !sourceIdea) return;
 
       const runNodes = refinementNodesByRun[activeRunKey] ?? [];
       const existingForKind = runNodes.find((node) => node.sourceNodeId === ideaNodeId && node.kind === kind);
@@ -601,7 +697,8 @@ export default function App() {
         }
         return;
       }
-
+      const ideaPayload = ideaNode?.idea ?? sourceIdea;
+      if (!ideaPayload) return;
       const loadingKey = `${ideaNodeId}:${kind}`;
       setRefinementLoading((prev) => ({
         ...prev,
@@ -614,10 +711,10 @@ export default function App() {
         const response = await generateRefinement({
           kind,
           idea: {
-            title: ideaNode.idea.title,
-            description: ideaNode.idea.description,
-            rationale: ideaNode.idea.rationale,
-            risk: ideaNode.idea.risk,
+            title: ideaPayload.title,
+            description: ideaPayload.description,
+            rationale: ideaPayload.rationale,
+            risk: ideaPayload.risk,
           },
           context:
             seedDetails ?? {
@@ -799,8 +896,8 @@ export default function App() {
     [activeRefinementNodes],
   );
 
-  const graphNodes = useMemo(
-    () => [...baseGraphNodes, ...ideaGraphNodes, ...refinementGraphNodes],
+  const graphNodes = useMemo<CanvasNode[]>(
+    () => [...baseGraphNodes, ...ideaGraphNodes, ...refinementGraphNodes] as CanvasNode[],
     [baseGraphNodes, ideaGraphNodes, refinementGraphNodes],
   );
 
@@ -838,6 +935,32 @@ export default function App() {
 
   useEffect(() => {
     if (!graphNodes.length) return;
+
+    const pipelineBaseNodes = graphNodes
+      .filter((node) => node.type !== 'idea' && node.type !== 'refinement')
+      .sort((a, b) => {
+        const orderA = PIPELINE_CARD_META[a.id]?.order ?? Number.MAX_SAFE_INTEGER;
+        const orderB = PIPELINE_CARD_META[b.id]?.order ?? Number.MAX_SAFE_INTEGER;
+        if (orderA === orderB) {
+          return a.id.localeCompare(b.id);
+        }
+        return orderA - orderB;
+      });
+
+    const pipelineIndexById: Record<string, number> = {};
+    pipelineBaseNodes.forEach((node, index) => {
+      pipelineIndexById[node.id] = index;
+    });
+
+    const totalIdeaNodes = activeIdeaNodes.length;
+    const ideaColumns = totalIdeaNodes > 0 ? Math.max(1, Math.ceil(Math.sqrt(totalIdeaNodes))) : 1;
+
+    const refinementColumnsByIdea: Record<string, number> = {};
+    for (const [ideaId, list] of Object.entries(refinementsByIdea) as [string, RefinementNode[]][]) {
+      const count = list.length;
+      refinementColumnsByIdea[ideaId] = count > 0 ? Math.max(1, Math.ceil(Math.sqrt(count))) : 1;
+    }
+
     setNodePositions((prev) => {
       let changed = false;
       const next: Record<string, { x: number; y: number }> = { ...prev };
@@ -852,32 +975,49 @@ export default function App() {
         });
       }
 
+      const PIPELINE_HORIZONTAL_SPACING = 420;
+      const PIPELINE_BASE_Y = 0;
+      const IDEA_BASE_OFFSET_X = 360;
+      const IDEA_HORIZONTAL_SPACING = 360;
+      const IDEA_VERTICAL_SPACING = 320;
+      const REFINEMENT_BASE_OFFSET_X = 320;
+      const REFINEMENT_HORIZONTAL_SPACING = 320;
+      const REFINEMENT_VERTICAL_SPACING = 280;
+
       for (const node of graphNodes) {
-        if (!next[node.id]) {
-          if (node.type === 'idea') {
-            const divergePosition = next['divergeGenerate'] ?? prev['divergeGenerate'] ?? { x: 0, y: 0 };
-            const ideaIndex = ideaIndexById[node.id] ?? 0;
-            const verticalSpacing = 180;
-            next[node.id] = {
-              x: divergePosition.x + 320,
-              y: divergePosition.y + ideaIndex * verticalSpacing,
-            };
-          } else if (node.type === 'refinement') {
-            const refinementMeta = refinementNodeById[node.id];
-            const parentPosition = refinementMeta
-              ? next[refinementMeta.sourceNodeId] ?? prev[refinementMeta.sourceNodeId] ?? { x: 0, y: 0 }
-              : { x: 0, y: 0 };
-            const refinementIndex = refinementIndexById[node.id] ?? 0;
-            const verticalSpacing = 150;
-            next[node.id] = {
-              x: parentPosition.x + 320,
-              y: parentPosition.y + refinementIndex * verticalSpacing,
-            };
-          } else {
-            next[node.id] = { x: 0, y: 0 };
-          }
-          changed = true;
+        if (next[node.id]) continue;
+
+        if (node.type === 'idea') {
+          const divergePosition = next['divergeGenerate'] ?? prev['divergeGenerate'] ?? { x: 0, y: 0 };
+          const ideaIndex = ideaIndexById[node.id] ?? 0;
+          const column = ideaColumns > 0 ? ideaIndex % ideaColumns : 0;
+          const row = ideaColumns > 0 ? Math.floor(ideaIndex / ideaColumns) : 0;
+          next[node.id] = {
+            x: divergePosition.x + IDEA_BASE_OFFSET_X + column * IDEA_HORIZONTAL_SPACING,
+            y: divergePosition.y + row * IDEA_VERTICAL_SPACING,
+          };
+        } else if (node.type === 'refinement') {
+          const refinementMeta = refinementNodeById[node.id];
+          const parentId = refinementMeta?.sourceNodeId;
+          const parentPosition = parentId
+            ? next[parentId] ?? prev[parentId] ?? { x: 0, y: 0 }
+            : { x: 0, y: 0 };
+          const columns = parentId ? refinementColumnsByIdea[parentId] ?? 1 : 1;
+          const refinementIndex = refinementIndexById[node.id] ?? 0;
+          const column = columns > 0 ? refinementIndex % columns : 0;
+          const row = columns > 0 ? Math.floor(refinementIndex / columns) : 0;
+          next[node.id] = {
+            x: parentPosition.x + REFINEMENT_BASE_OFFSET_X + column * REFINEMENT_HORIZONTAL_SPACING,
+            y: parentPosition.y + row * REFINEMENT_VERTICAL_SPACING,
+          };
+        } else {
+          const stageIndex = pipelineIndexById[node.id] ?? 0;
+          next[node.id] = {
+            x: stageIndex * PIPELINE_HORIZONTAL_SPACING,
+            y: PIPELINE_BASE_Y,
+          };
         }
+        changed = true;
       }
 
       for (const existingId of Object.keys(next)) {
@@ -984,7 +1124,7 @@ export default function App() {
       measureEdges();
     });
     return () => cancelAnimationFrame(raf);
-  }, [measureEdges, graphNodes, nodePositions, zoom]);
+  }, [measureEdges, graphNodes, nodePositions, zoom, nodeScale]);
 
   useEffect(() => {
     const handleResize = () => measureEdges();
@@ -1047,8 +1187,9 @@ export default function App() {
     const state = dragStateRef.current;
     if (!state.nodeId || state.pointerId !== event.pointerId) return;
 
-    const dx = (event.clientX - state.pointerStartX) / zoom;
-    const dy = (event.clientY - state.pointerStartY) / zoom;
+    const scaleFactor = zoom * nodeScale || 1;
+    const dx = (event.clientX - state.pointerStartX) / scaleFactor;
+    const dy = (event.clientY - state.pointerStartY) / scaleFactor;
 
     if (!state.wasDragging) {
       const distance = Math.hypot(dx, dy);
@@ -1818,7 +1959,12 @@ export default function App() {
                             : `Add ${template.label}`;
                           const handleAction = hasKind
                             ? () => existing && handleFocusIdeaNode(existing.id)
-                            : () => void handleAddRefinementNode(promotedNodeId, kind);
+                            : () =>
+                                void handleAddRefinementNode(
+                                  promotedNodeId,
+                                  kind,
+                                  promotedNode?.idea ?? idea,
+                                );
                           return (
                             <button
                               key={`${promotedNodeId}-${kind}`}
@@ -1848,18 +1994,6 @@ export default function App() {
 
       if (nodeId === 'seed') {
         const seedOutput = node.output as SeedNodeOutput | undefined;
-        const fallbackSeed = node.input as
-          | {
-              goal?: string;
-              audience?: string;
-              constraints?: string;
-            }
-          | undefined;
-        const details = seedOutput?.details ?? fallbackSeed;
-        if (!details) return null;
-        const goalText = truncateText(details.goal || '', 140) || '—';
-        const audienceText = truncateText(details.audience || '', 140) || '—';
-        const constraintsText = truncateText(details.constraints || '', 160) || '—';
         const summary = seedOutput?.summary ? tidyText(seedOutput.summary) : '';
         const parameters = seedOutput?.parameters;
         const metaParts: string[] = [];
@@ -1878,21 +2012,11 @@ export default function App() {
               <span className="node-preview-title">{seedOutput?.title ?? 'Seed'}</span>
               {metaLabel && <span className="node-preview-meta">{metaLabel}</span>}
             </div>
-            {summary && <p className="node-card-info">{summary}</p>}
-            <ul className="seed-summary">
-              <li>
-                <span>Goal</span>
-                <strong>{goalText}</strong>
-              </li>
-              <li>
-                <span>Audience</span>
-                <strong>{audienceText}</strong>
-              </li>
-              <li>
-                <span>Constraints</span>
-                <strong>{constraintsText}</strong>
-              </li>
-            </ul>
+            {summary ? (
+              <p className="node-card-info">{summary}</p>
+            ) : (
+              <p className="node-card-info muted">Edit goal, audience, and constraints in the fields above.</p>
+            )}
           </div>
         );
       }
@@ -1936,9 +2060,49 @@ export default function App() {
     setZoom(1);
   };
 
+  const handleIncreaseNodeScale = () => {
+    setNodeScale((prev) => Math.min(MAX_NODE_SCALE, Number((prev + NODE_SCALE_STEP).toFixed(2))));
+  };
+
+  const handleDecreaseNodeScale = () => {
+    setNodeScale((prev) => Math.max(MIN_NODE_SCALE, Number((prev - NODE_SCALE_STEP).toFixed(2))));
+  };
+
+  const handleResetNodeScale = () => {
+    setNodeScale(1);
+  };
+
+  const handleCanvasWheel = useCallback(
+    (event: ReactWheelEvent<HTMLDivElement>) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      const { deltaY } = event;
+      if (Number.isNaN(deltaY) || deltaY === 0) return;
+      setZoom((prev) => {
+        const factor = Math.exp(-deltaY * PINCH_ZOOM_SENSITIVITY);
+        const next = Number((prev * factor).toFixed(2));
+        return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
+      });
+    },
+    [MAX_ZOOM, MIN_ZOOM],
+  );
+
+  const canvasStyle = useMemo(() => {
+    const style: CSSProperties = {
+      transform: `scale(${zoom})`,
+      transformOrigin: 'top left',
+    };
+    (style as CSSProperties & Record<string, string | number>)["--node-scale"] = nodeScale.toFixed(2);
+    return style;
+  }, [nodeScale, zoom]);
+
   const canZoomIn = zoom < MAX_ZOOM;
   const canZoomOut = zoom > MIN_ZOOM;
   const showReset = zoom !== 1;
+  const canScaleUp = nodeScale < MAX_NODE_SCALE - 1e-3;
+  const canScaleDown = nodeScale > MIN_NODE_SCALE + 1e-3;
+  const showScaleReset = Math.abs(nodeScale - 1) > 0.01;
+  const nodeScaleLabel = Math.round(nodeScale * 100);
 
   const appShellClassName = ['app-shell', isInspectorOpen ? 'dev-open' : '']
     .filter(Boolean)
@@ -1954,6 +2118,34 @@ export default function App() {
               <p className="pipeline-subtitle">Seed inputs live in the Seed node card.</p>
             </div>
             <div className="pipeline-actions">
+              <div className="node-size-controls" role="group" aria-label="Node size">
+                <button
+                  type="button"
+                  className="zoom-button"
+                  onClick={handleDecreaseNodeScale}
+                  disabled={!canScaleDown}
+                  aria-label="Decrease node size"
+                >
+                  A−
+                </button>
+                <span className="zoom-level" aria-live="polite">
+                  {nodeScaleLabel}%
+                </span>
+                <button
+                  type="button"
+                  className="zoom-button"
+                  onClick={handleIncreaseNodeScale}
+                  disabled={!canScaleUp}
+                  aria-label="Increase node size"
+                >
+                  A+
+                </button>
+                {showScaleReset && (
+                  <button type="button" className="zoom-reset" onClick={handleResetNodeScale}>
+                    Reset
+                  </button>
+                )}
+              </div>
               <div className="zoom-controls" role="group" aria-label="Canvas zoom">
                 <button
                   type="button"
@@ -1991,11 +2183,11 @@ export default function App() {
               </button>
             </div>
           </div>
-          <div className="canvas">
+          <div className="canvas" onWheel={handleCanvasWheel}>
             <div
               className="canvas-content"
               ref={canvasContentRef}
-              style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}
+              style={canvasStyle}
             >
               {canvasSize.width > 0 && canvasSize.height > 0 && edgeLines.length > 0 && (
                 <svg
@@ -2089,15 +2281,20 @@ export default function App() {
                 const isSeedNode = node.id === 'seed';
                 const position = nodePositions[node.id] ?? { x: 0, y: 0 };
                 const isDragging = draggingNodeId === node.id;
+                const headerMeta = getNodeHeaderMeta(node);
+                const statusLabel = `${status.charAt(0).toUpperCase()}${status.slice(1)}`;
                 return (
                   <div
                     className={`canvas-item ${isDragging ? 'dragging' : ''}`}
                     key={node.id}
-                    style={{ transform: `translate(${position.x}px, ${position.y}px)` }}
-                    ref={(el) => {
-                      nodeRefs.current[node.id] = el;
-                    }}
+                    style={{ transform: `translate(${position.x * nodeScale}px, ${position.y * nodeScale}px)` }}
                   >
+                    <div
+                      className="node-card-wrapper"
+                      ref={(el) => {
+                        nodeRefs.current[node.id] = el;
+                      }}
+                    >
                     <div
                       className={`node-card status-${status} ${selectedNodeId === node.id ? 'selected' : ''}`}
                     >
@@ -2111,8 +2308,18 @@ export default function App() {
                         onPointerCancel={handleNodePointerCancel}
                       >
                         <span className="node-toggle-content">
-                          <span className="node-label">{node.label}</span>
-                          <span className="node-status">{status}</span>
+                          <span className="node-header-line">
+                            {headerMeta.orderLabel && (
+                              <span className="node-sequence-chip">{headerMeta.orderLabel}</span>
+                            )}
+                            <span className="node-label">{node.label}</span>
+                          </span>
+                          <span className="node-subheader-line">
+                            {headerMeta.description && (
+                              <span className="node-descriptor">{headerMeta.description}</span>
+                            )}
+                            <span className={`node-status-pill status-${status}`}>{statusLabel}</span>
+                          </span>
                         </span>
                       </button>
                       {isSeedNode && (
@@ -2142,6 +2349,7 @@ export default function App() {
                           {getNodeTiming(nodeData)}
                         </div>
                       )}
+                    </div>
                     </div>
                   </div>
                 );
@@ -2211,6 +2419,7 @@ export default function App() {
                         <span className="template-pill-tagline" aria-live="polite">{taglineText}</span>
                         <span className="template-pill-meta">{template.scenario}</span>
                         <span className="template-pill-focus">Focus: {template.focus}</span>
+                        <span className="template-pill-angle">Angle: {template.angle}</span>
                       </button>
                     </li>
                   );

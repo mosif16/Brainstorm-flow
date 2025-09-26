@@ -43,72 +43,72 @@ const SEED_TEMPLATES: Record<SeedTemplateKey, SeedTemplateDefinition> = {
   'product-launch': {
     key: 'product-launch',
     label: 'Product Launch Kickoff',
-    tagline: 'Frame a net-new product initiative with crisp launch goals.',
+    tagline: 'Start with a launch target simple enough to riff on fast.',
     scenario:
-      'A cross-functional squad is gearing up to launch a flagship product or capability and needs unified problem framing.',
+      'A cross-functional squad is preparing to ship something new and needs a lightweight framing that inspires quick idea riffs.',
     focus:
-      'Spell out the business objective, success metric, and launch window; profile the target segment with behavioural cues; and list hard constraints like channels, compliance stipulations, or governance gates.',
-    angle: 'Inspire bold concepts while keeping the team anchored to a measurable launch outcome and explicit go-to-market boundaries.',
+      'State the core outcome in plain language, sketch the primary audience with one memorable trait, and list only the constraints that truly shape first-wave ideas (timeline, channels, approvals).',
+    angle: 'Provide just enough direction for rapid expansion without overwhelming the first brainstorming pass.',
   },
   'retention-push': {
     key: 'retention-push',
     label: 'Retention Boost Sprint',
-    tagline: 'Set the stage for experiments that reduce churn and increase engagement.',
+    tagline: 'Kick off simple moves that keep wavering users around.',
     scenario:
-      'Growth, lifecycle, or CRM partners want rapid-fire ideas to keep an at-risk cohort engaged across touchpoints.',
+      'Growth or lifecycle teams need a quick starting point for retention experiments aimed at a clear-at-risk segment.',
     focus:
-      'Name the retention or engagement KPI, characterize the vulnerable cohort with triggers and pain points, and list incentives, tone, and regulatory guardrails the team must respect.',
-    angle: 'Encourage experimentation while protecting brand voice and incentive policies.',
+      'Highlight one metric to improve, describe the segment in a single vivid line, and surface the must-follow rules (like incentive limits or tone).',
+    angle: 'Keep the brief lightweight so new engagement ideas can stack onto it quickly.',
   },
   'workflow-automation': {
     key: 'workflow-automation',
     label: 'Workflow Automation Upgrade',
-    tagline: 'Prime the team to streamline an internal or customer workflow.',
+    tagline: 'Frame a bite-sized automation win the team can build out.',
     scenario:
-      'Ops or service teams need automation concepts to make a multi-step workflow faster, less error-prone, and more delightful for operators.',
+      'Operations or service partners want a clear workflow pain point that invites incremental automation ideas.',
     focus:
-      'Describe the current-state workflow and bottlenecks, outline the primary operators and stakeholders, and capture constraints like integrations, compliance, or change-management adoption risks.',
-    angle: 'Balance efficiency wins with human adoption and risk controls.',
+      'Name the clunky moment, call out who feels the friction, and mention only the guardrails that could block quick prototypes (systems, compliance, approvals).',
+    angle: 'Aim for a modest improvement that unlocks deeper automation follow-ups.',
   },
   'market-expansion': {
     key: 'market-expansion',
     label: 'New Market Expansion',
-    tagline: 'Craft a seed that stretches the product into a fresh geography or customer segment.',
+    tagline: 'Outline a starter move into a fresh segment we can layer on.',
     scenario:
-      'Strategy and product leadership are exploring expansion into a new region or vertical and need to surface localization, GTM, and operations considerations.',
+      'Product and strategy leads are testing the waters in a new region or niche and need a simple anchor before deep planning.',
     focus:
-      'Articulate the expansion objective with target benchmarks, describe the new segment’s behaviours and unmet needs, and outline constraints around localization, compliance, partnerships, or supply chain.',
-    angle: 'Help the team blend ambition with the practicalities of entering a new market responsibly.',
+      'State the expansion goal in one plain sentence, describe the new audience with a standout behaviour, and mention the top boundary (like localization or partner needs).',
+    angle: 'Seed a lightweight entry point that future research and go-to-market planning can amplify.',
   },
   'loyalty-refresh': {
     key: 'loyalty-refresh',
     label: 'Loyalty Program Refresh',
-    tagline: 'Reboot an aging rewards or membership program with sharper value props.',
+    tagline: 'Highlight a simple member win we can iterate from.',
     scenario:
-      'Marketing and product teams want concepts that modernize an existing loyalty program to increase lifetime value and brand affinity.',
+      'Marketing and product teammates need a crisp prompt to rethink how the loyalty program keeps members coming back.',
     focus:
-      'State the loyalty KPIs to move, detail the member archetypes and their motivations, and list constraints like budget tiers, partnership obligations, or brand tone.',
-    angle: 'Push for differentiated value while protecting economics and partner commitments.',
+      'Clarify the one KPI to nudge, capture who the member is in everyday language, and note the boundaries (budget tiers, partner promises, tone).',
+    angle: 'Keep it practical so the next session can pile on creative perks and journeys.',
   },
   'support-copilot': {
     key: 'support-copilot',
     label: 'Support Copilot Enablement',
-    tagline: 'Jump-start ideation on AI-assisted customer support workflows.',
+    tagline: 'Start with a focused copilot assist we can layer intelligence onto.',
     scenario:
-      'Customer support leaders are evaluating AI copilots to reduce handle time and improve agent confidence.',
+      'Support leaders want a clear use case where an AI copilot gives agents a nudge without overhauling everything.',
     focus:
-      'Quantify the service goals, describe primary agent personas and escalation paths, and capture constraints such as privacy policies, tooling integrations, and trust requirements.',
-    angle: 'Encourage agent-centric outcomes that build trust and maintain compliance.',
+      'Mention the service outcome in simple terms, describe the agent moment where help is needed, and point out must-follow rules (privacy, tools, trust).',
+    angle: 'Seed a small assist that future automation and safeguards can extend.',
   },
   'insights-benchmark': {
     key: 'insights-benchmark',
     label: 'Insights & Benchmark Hub',
-    tagline: 'Jump-start analytics and benchmarking initiatives for stakeholders.',
+    tagline: 'Pin down a simple dashboard idea the team can scale up.',
     scenario:
-      'Data, product, and exec partners need ideas for a consolidated insights hub that compares performance across cohorts or competitors.',
+      'Data and product partners need a quick prompt for an insights hub that highlights one comparison everyone cares about.',
     focus:
-      'Define the decision-making goal, describe the stakeholder groups and their analytic maturity, and spell out data availability, governance rules, or visualization constraints.',
-    angle: 'Drive clarity around decision readiness while respecting data stewardship obligations.',
+      'Share the decision question in plain words, note who needs the insight, and list the data or governance rule that could complicate things.',
+    angle: 'Offer a starter take the analytics team can expand into richer benchmarks.',
   },
 };
 

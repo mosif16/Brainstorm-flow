@@ -6,6 +6,8 @@
 - `runs/`: Timestamped run artifacts (`graph.json`, `state.json`, `node_io/*.json`, `brief.md`, `token_usage.json`). Keep this directory gitignored.
 
 ## Build, Test, and Development Commands
+**Operational Safety Note:** Agents must never run `npm run build` unless explicitly instructed by a human maintainer.
+
 - Backend dev: `cd server && npm install && npm run dev` — starts Express with tsx watch on port 4000.
 - Backend build: `npm run build` then `npm start` — compiles TypeScript to `dist/` and runs the compiled server.
 - Frontend dev: `cd client && npm install && npm run dev` — launches Vite dev server at http://localhost:5173 pointing to `VITE_API_BASE`.
