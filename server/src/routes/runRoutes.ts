@@ -11,9 +11,9 @@ import {
   type RefinementIdeaPayload,
   type RefinementContextPayload,
 } from '../services/refinements';
+import { listSeedTemplates, generateSeedTemplate as runSeedTemplate, isSeedTemplateKey } from '../services/seedTemplates';
 
 const ALLOWED_REFINEMENT_KINDS = new Set(['ui-flow', 'capability-breakdown', 'experience-polish']);
-
 function normalizeSeed(body: any): SeedInput {
   if (!body || typeof body !== 'object') {
     throw new Error('Request body must be an object.');
@@ -80,6 +80,29 @@ export function createRunRouter(config: AppConfig) {
       runPipeline(config, seed, emitter, runId).catch((error) => {
         console.error(`Run ${runId} failed:`, error);
       });
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message });
+    }
+  });
+
+  router.get('/seed/templates', (_req, res) => {
+    res.json(listSeedTemplates());
+  });
+
+  router.post('/seed/templates', async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const candidate =
+        typeof body.template === 'string'
+          ? body.template
+          : typeof body.key === 'string'
+          ? body.key
+          : '';
+      if (!candidate || !isSeedTemplateKey(candidate)) {
+        throw new Error('Invalid seed template selection.');
+      }
+      const result = await runSeedTemplate(config, candidate);
+      res.json(result);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
     }

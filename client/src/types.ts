@@ -53,6 +53,32 @@ export interface GeminiUsage {
   cachedContentTokenCount?: number;
 }
 
+export type SeedTemplateKey =
+  | 'product-launch'
+  | 'retention-push'
+  | 'workflow-automation'
+  | 'market-expansion'
+  | 'loyalty-refresh'
+  | 'support-copilot'
+  | 'insights-benchmark';
+
+export interface SeedTemplateSummary {
+  key: SeedTemplateKey;
+  label: string;
+  tagline: string;
+  scenario: string;
+  focus: string;
+  angle: string;
+}
+
+export interface SeedTemplateSuggestion {
+  goal: string;
+  audience: string;
+  constraints: string;
+  usage?: GeminiUsage;
+  raw?: string;
+}
+
 export interface SeedNodeOutput {
   title: string;
   summary: string;

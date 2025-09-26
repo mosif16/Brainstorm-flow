@@ -1,4 +1,11 @@
-import type { Graph, PipelineRunState, RunDetailResponse } from './types';
+import type {
+  Graph,
+  PipelineRunState,
+  RunDetailResponse,
+  SeedTemplateSummary,
+  SeedTemplateSuggestion,
+  SeedTemplateKey,
+} from './types';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:4000';
 
@@ -68,4 +75,18 @@ export async function generateRefinement(payload: {
     body: JSON.stringify(payload),
   });
   return handleResponse<{ fields: Record<string, string>; usage?: Record<string, unknown>; raw?: string }>(res);
+}
+
+export async function fetchSeedTemplates(): Promise<SeedTemplateSummary[]> {
+  const res = await fetch(`${API_BASE}/seed/templates`);
+  return handleResponse<SeedTemplateSummary[]>(res);
+}
+
+export async function generateSeedTemplateSuggestion(template: SeedTemplateKey): Promise<SeedTemplateSuggestion> {
+  const res = await fetch(`${API_BASE}/seed/templates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template }),
+  });
+  return handleResponse<SeedTemplateSuggestion>(res);
 }

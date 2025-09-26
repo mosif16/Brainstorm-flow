@@ -9,7 +9,16 @@ import {
   type ReactNode,
 } from 'react';
 import type { ChangeEvent } from 'react';
-import { fetchGraph, fetchRunDetail, fetchRuns, startRun, briefDownloadUrl, generateRefinement } from './api';
+import {
+  fetchGraph,
+  fetchRunDetail,
+  fetchRuns,
+  startRun,
+  briefDownloadUrl,
+  generateRefinement,
+  fetchSeedTemplates,
+  generateSeedTemplateSuggestion,
+} from './api';
 import { useRunStream } from './hooks/useRunStream';
 import type {
   Graph,
@@ -20,6 +29,8 @@ import type {
   SeedNodeOutput,
   DivergeNodeOutput,
   PackagedBrief,
+  SeedTemplateSummary,
+  SeedTemplateKey,
 } from './types';
 import './App.css';
 
@@ -222,6 +233,11 @@ export default function App() {
   const [collapsedNodeContent, setCollapsedNodeContent] = useState<Record<string, Record<string, boolean>>>({});
   const [ideaNodesByRun, setIdeaNodesByRun] = useState<Record<string, PromotedIdeaNode[]>>({});
   const [refinementNodesByRun, setRefinementNodesByRun] = useState<Record<string, RefinementNode[]>>({});
+  const [seedTemplates, setSeedTemplates] = useState<SeedTemplateSummary[]>([]);
+  const [isTemplateMenuOpen, setIsTemplateMenuOpen] = useState(false);
+  const [isTemplateListLoading, setIsTemplateListLoading] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState<Partial<Record<SeedTemplateKey, boolean>>>({});
+  const [templateError, setTemplateError] = useState<string | null>(null);
   const [refinementLoading, setRefinementLoading] = useState<Record<string, boolean>>({});
   const canvasContentRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -269,6 +285,30 @@ export default function App() {
   useEffect(() => {
     fetchGraph().then(setGraph).catch(console.error);
     fetchRuns().then(setRuns).catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    let isActive = true;
+    setIsTemplateListLoading(true);
+    setTemplateError(null);
+    fetchSeedTemplates()
+      .then((templates) => {
+        if (!isActive) return;
+        setSeedTemplates(templates);
+      })
+      .catch((err) => {
+        if (!isActive) return;
+        console.error(err);
+        setTemplateError(err instanceof Error ? err.message : 'Failed to load templates.');
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsTemplateListLoading(false);
+        }
+      });
+    return () => {
+      isActive = false;
+    };
   }, []);
 
   const activeRunKey = currentRunId ?? '__draft__';
@@ -1109,6 +1149,35 @@ export default function App() {
     }));
   };
 
+  const handleApplySeedTemplate = async (templateKey: SeedTemplateKey) => {
+    setTemplateError(null);
+    setTemplateLoading((prev) => ({
+      ...prev,
+      [templateKey]: true,
+    }));
+    try {
+      const suggestion = await generateSeedTemplateSuggestion(templateKey);
+      setForm((prev) => ({
+        ...prev,
+        goal: suggestion.goal,
+        audience: suggestion.audience,
+        constraints: suggestion.constraints,
+      }));
+      setIsTemplateMenuOpen(false);
+      setError(null);
+    } catch (err) {
+      console.error(err);
+      setTemplateError(err instanceof Error ? err.message : 'Failed to generate template.');
+    } finally {
+      setTemplateLoading((prev) => {
+        if (!prev[templateKey]) return prev;
+        const next = { ...prev };
+        delete next[templateKey];
+        return next;
+      });
+    }
+  };
+
   const handleStartRun = async () => {
     setError(null);
     if (!form.goal || !form.audience || !form.constraints) {
@@ -1871,7 +1940,9 @@ export default function App() {
   const canZoomOut = zoom > MIN_ZOOM;
   const showReset = zoom !== 1;
 
-  const appShellClassName = `app-shell ${isInspectorOpen ? 'dev-open' : ''}`.trim();
+  const appShellClassName = ['app-shell', isInspectorOpen ? 'dev-open' : '']
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <div className={appShellClassName}>
@@ -2088,16 +2159,66 @@ export default function App() {
       <aside className={`panel inspector-panel ${isInspectorOpen ? 'open' : 'collapsed'}`}>
         <div className="inspector-header">
           <h2>Dev Tools</h2>
-          <button
-            type="button"
-            className={`dev-toggle ${isInspectorOpen ? 'active' : ''}`}
-            onClick={() => setIsInspectorOpen((prev) => !prev)}
-            aria-expanded={isInspectorOpen}
-            aria-controls="dev-tools-content"
-          >
-            Dev
-          </button>
+          <div className="inspector-actions">
+            <button
+              type="button"
+              className={`template-toggle ${isTemplateMenuOpen ? 'active' : ''}`}
+              onClick={() =>
+                setIsTemplateMenuOpen((prev) => {
+                  const next = !prev;
+                  if (next) setIsInspectorOpen(true);
+                  return next;
+                })
+              }
+              aria-expanded={isTemplateMenuOpen}
+              aria-controls="seed-templates-pocket"
+            >
+              Templates
+            </button>
+            <button
+              type="button"
+              className={`dev-toggle ${isInspectorOpen ? 'active' : ''}`}
+              onClick={() => setIsInspectorOpen((prev) => !prev)}
+              aria-expanded={isInspectorOpen}
+              aria-controls="dev-tools-content"
+            >
+              Dev
+            </button>
+          </div>
         </div>
+        {isTemplateMenuOpen && (
+          <div id="seed-templates-pocket" className="templates-pocket">
+            <p className="templates-hint">Autofill goal, audience, and constraints instantly.</p>
+            {templateError && <p className="error-text">{templateError}</p>}
+            {isTemplateListLoading ? (
+              <p className="templates-empty">Loading templates…</p>
+            ) : seedTemplates.length === 0 ? (
+              <p className="templates-empty">No templates available.</p>
+            ) : (
+              <ul className="templates-list">
+                {seedTemplates.map((template) => {
+                  const isGenerating = Boolean(templateLoading[template.key]);
+                  const taglineText = isGenerating ? 'Generating…' : template.tagline;
+                  return (
+                    <li key={template.key}>
+                      <button
+                        type="button"
+                        className={`template-pill ${isGenerating ? 'loading' : ''}`}
+                        onClick={() => void handleApplySeedTemplate(template.key)}
+                        disabled={isGenerating}
+                      >
+                        <span className="template-pill-label">{template.label}</span>
+                        <span className="template-pill-tagline" aria-live="polite">{taglineText}</span>
+                        <span className="template-pill-meta">{template.scenario}</span>
+                        <span className="template-pill-focus">Focus: {template.focus}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
         {isInspectorOpen && (
           <div id="dev-tools-content" className="dev-content">
             <DevSection
@@ -2271,6 +2392,8 @@ export default function App() {
           </div>
         )}
       </aside>
+
+
     </div>
   );
 }
