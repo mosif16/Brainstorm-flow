@@ -1,73 +1,40 @@
-# React + TypeScript + Vite
+# Brainstorm Flow Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 18 + Vite single-page app that visualizes the brainstorming pipeline, manages runs, and requests refinements from the backend.
 
-Currently, two official plugins are available:
+## Features
+- Canvas view of pipeline nodes with live status and zoom/drag interactions.
+- Seed form with Gemini-powered template picker and suggestion generator.
+- Promoted idea rail for curating standout concepts and triggering refinements.
+- Refinement modals that request follow-up content (UI flow, capability breakdown, experience polish).
+- Inspector sidebar exposing node IO payloads, timestamps, usage metadata, and developer tools.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Getting Started
+```bash
+npm install
+npm run dev
 ```
+The dev server listens on `http://localhost:5173` by default and proxies API calls to `VITE_API_BASE` (default `http://localhost:4000`). Run the backend with `npm run dev` inside `server/` or launch both via `../start-dev.sh`.
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Environment Variables
+Copy `.env.example` to `.env` and edit as needed:
+- `VITE_API_BASE` – Base URL for the backend API (defaults to the local Express server).
+- Optionally override the Vite dev server port via standard Vite config if port 5173 is occupied.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Project Structure
+- `src/App.tsx` – Main application wiring, canvas logic, idea promotion, and refinement handling.
+- `src/api.ts` – Fetch helpers for runs, refinements, briefs, and seed templates.
+- `src/hooks/useRunStream.ts` – Consumes the Server-Sent Events stream for live updates.
+- `src/App.css` – Styling for the canvas, inspector, and refinement modals.
+- `src/types.ts` – Shared client-side TypeScript types matching the backend payloads.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Testing
+No automated tests exist yet. When adding them, prefer Vitest and place files under `src/__tests__/` with the `*.test.tsx` naming convention.
+
+## Production Build
+Use only when cleared by a maintainer:
+```bash
+npm run build
+npm run preview
 ```
+Serve `dist/` from your production host and point `VITE_API_BASE` to the deployed backend.
