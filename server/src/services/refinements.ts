@@ -126,9 +126,10 @@ export interface GenerateRefinementResult {
 function buildPrompt(kind: RefinementKind, idea: RefinementIdeaPayload, context?: RefinementContextPayload): string {
   const template = TEMPLATES[kind];
   const sections = [
-    'You are an expert product strategist and UX collaborator.',
+    'You are a senior product strategist and UX collaborator shaping a shippable app experience.',
     `Generate a structured ${template.label.toLowerCase()} for the following concept.`,
     'Respond with JSON only that matches the provided schema.',
+    'Assume the product is launching for users in the United States unless the concept or context states otherwise, and weave in any US-specific considerations.',
     '',
     'Concept Details:',
     `- Title: ${idea.title}`,
@@ -148,7 +149,7 @@ function buildPrompt(kind: RefinementKind, idea: RefinementIdeaPayload, context?
     }
   }
 
-  sections.push('', 'Output Requirements:');
+  sections.push('', 'Output Requirements:', 'Anchor every field in the realities of shipping and scaling this app for US users, while calling out creative flourishes or standout mechanics that reinforce differentiation.');
   template.fields.forEach((field, index) => {
     sections.push(`${index + 1}. ${field.label}: ${field.placeholder}`);
   });

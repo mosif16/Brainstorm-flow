@@ -2407,6 +2407,13 @@ export default function App() {
                 {seedTemplates.map((template) => {
                   const isGenerating = Boolean(templateLoading[template.key]);
                   const taglineText = isGenerating ? 'Generating…' : template.tagline;
+                  const detailTooltip = [
+                    template.scenario,
+                    `Focus: ${template.focus}`,
+                    `Angle: ${template.angle}`,
+                  ]
+                    .filter(Boolean)
+                    .join(' • ');
                   return (
                     <li key={template.key}>
                       <button
@@ -2414,12 +2421,12 @@ export default function App() {
                         className={`template-pill ${isGenerating ? 'loading' : ''}`}
                         onClick={() => void handleApplySeedTemplate(template.key)}
                         disabled={isGenerating}
+                        title={detailTooltip}
+                        aria-label={`${template.label} – ${taglineText}`}
+                        aria-busy={isGenerating}
                       >
                         <span className="template-pill-label">{template.label}</span>
                         <span className="template-pill-tagline" aria-live="polite">{taglineText}</span>
-                        <span className="template-pill-meta">{template.scenario}</span>
-                        <span className="template-pill-focus">Focus: {template.focus}</span>
-                        <span className="template-pill-angle">Angle: {template.angle}</span>
                       </button>
                     </li>
                   );
